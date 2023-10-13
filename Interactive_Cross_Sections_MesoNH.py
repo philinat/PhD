@@ -7,6 +7,7 @@ Created on Thu Dec  1 10:35:05 2022
 """
 import time
 import numpy as np
+from numpy.lib.stride_tricks import as_strided
 from matplotlib import pyplot as plt 
 from matplotlib.animation import FuncAnimation
 import mpl_toolkits.axes_grid1
@@ -26,14 +27,16 @@ floatype = np.float16
 simu = 'AMMA'
 # simu = 'AMA0W'
 # simu = 'BOMEX'
+#simu = 'ABL0V'
+
 relative_humidity = True
 wind = True
 put_in_RAM = True
+orog = False
+
 if simu == 'AMMA':
-    # path = '/cnrm/tropics/user/couvreux/POUR_NATHAN/AMMA/SIMU_LES/'
-    path = '../'
-    # if put_in_RAM:
-    lFiles = [path + 'AMMH3.1.GD551.OUT.{:03d}.nc'.format(i) for i in range(280,300)]
+    path = '/cnrm/tropics/user/couvreux/POUR_NATHAN/AMMA/SIMU_LES/'
+    lFiles = [path + 'AMMH3.1.GD551.OUT.{:03d}.nc'.format(i) for i in range(300,302)]
     # lFiles = [path + 'AMMH3.1.GD551.OUT.{:03d}.nc'.format(i) for i in range(294,322)]
     # lFiles = [path + 'AMMH3.1.GD551.OUT.{:03d}.nc'.format(i) for i in range(315,322)]
     # else:
@@ -53,35 +56,42 @@ elif simu == 'BOMEX':
     # lFiles = [path + 'L25{:02d}.1.KUAB2.OUT.{:03d}.nc'.format(i//6+1,i%6+1) for i in range(120)]
     hours = np.arange(100,121,1)
     lFiles = [path + 'L25{:02d}.1.KUAB2.OUT.{:03d}.nc'.format(i//6+1,i%6+1) for i in hours-1]
+
+elif simu == 'ABL0V':
+    path = '/cnrm/tropics/user/philippotn/LES_ABL0V/SIMU_LES/'
+    lFiles = [path + 'ABL0V.1.SEG01.OUT.{:03d}.nc'.format(i) for i in range(200,301,20)]
     
 savePath = '/cnrm/tropics/user/philippotn/LES_'+simu+'/figures_maps/'
 
 f0 = xr.open_dataset(lFiles[0])
 
-x = np.array(f0.ni)/1000
-y = np.array(f0.nj)/1000
-z = np.array(f0.level)/1000
-nz,nx,ny = len(z),len(x),len(y)
+#%%
 
-# nx1 = 1 ; nx2 = nx-1
-# ny1 = 1 ; ny2 = ny-1
-# nz1 = 1 ; nz2 = nz-1
+# nx1 = 1 ; nx2 = len(f0.ni)-1
+# ny1 = 1 ; ny2 = len(f0.nj)-1
+# nz1 = 1 ; nz2 = len(f0.level)-1
 
-nx1 = 1 ; nx2 = nx*6//10
-ny1 = 1 ; ny2 = ny*6//10
-nz1 = 1 ; nz2 = nz-24
+nx1 = 1 ; nx2 = len(f0.ni)*6//10
+ny1 = 1 ; ny2 = len(f0.nj)*6//10
+nz1 = 1 ; nz2 = len(f0.level)-24
 
 x = np.array(f0.ni)[nx1:nx2]/1000
 y = np.array(f0.nj)[ny1:ny2]/1000
 z = np.array(f0.level)[nz1:nz2]/1000
 
-x_ = (np.array(f0.ni)[nx1:nx2+1]+np.array(f0.ni)[nx1-1:nx2])/2000
-y_ = (np.array(f0.nj)[ny1:ny2+1]+np.array(f0.nj)[ny1-1:ny2])/2000
-z_ = (np.array(f0.level)[nz1:nz2+1]+np.array(f0.level)[nz1-1:nz2])/2000
-
 dx=x[1]-x[0]
+nz,nx,ny = len(z),len(x),len(y)
+
+x_ = np.append(x,x[-1]+dx) -dx/2
+y_ = np.append(x,x[-1]+dx) -dx/2
+z_ = (np.array(f0.level)[nz1:nz2+1]+np.array(f0.level)[nz1-1:nz2])/2000
+z__ = np.array(f0.level)[nz1-1:nz2+1]/1000
+
 nt,nz,nx,ny = len(lFiles),len(z),len(x),len(y)
 
+if orog:
+    zs = xr.open_dataset(path+simu+'_init_pgd.nc')['ZS'][1:-1,1:-1].data
+    
 #%%
 if relative_humidity:
     from compute_RH_lcl import RH_water_ice
@@ -107,10 +117,10 @@ if wind:
             io=ios[iz]
             new_var[iz] = var[io]*c0s[iz] + var[io+1]*c1s[iz]
         return new_var
-
+if orog:
+    def interp_on_regular_grid(var,z,zs):
+        return var
 #%%
-# @njit()
-# def mean_uvw(var,z,new_z):
     
 if not(put_in_RAM):
     times = []
@@ -165,6 +175,7 @@ else:
         data5D[4,it] *= 1000
         
         print(time.ctime()[-13:-5] ,str(round(time.time()-time0,1))+' s')
+        
 #%%
 k = 2*np.pi*np.fft.rfftfreq(nx,dx)
 m = 2*np.pi*np.fft.fftfreq(ny,dx)
@@ -189,11 +200,12 @@ def TDMAsolver(ac, bc, cc, dc):
 
 k = 2*np.pi*np.fft.rfftfreq(nx, d=dx)
 nk = len(k)
-kk , _ = np.meshgrid(k,np.zeros(nz-2))
+kk , _ = np.meshgrid(k,np.zeros(nz))
 
-b_diag = ( kk**2 + (( 2/(z[2:]-z[1:-1]) + 2/(z[1:-1]-z[:-2])  )/(z[2:]-z[:-2])).reshape((nz-2,1)) )*np.ones((nz-2,nk),dtype=complex)
-a_side = ( -2/(z[1:-1]-z[:-2])/(z[2:]-z[:-2]) ).reshape((nz-2,1)) *np.ones((nz-2,nk),dtype=complex)
-c_side = ( -2/(z[2:]-z[1:-1])/(z[2:]-z[:-2])  ).reshape((nz-2,1)) *np.ones((nz-2,nk),dtype=complex)
+
+b_diag = ( kk**2 + (( 2/(z__[2:]-z__[1:-1]) + 2/(z__[1:-1]-z__[:-2])  )/(z__[2:]-z__[:-2])).reshape((nz,1)) )*np.ones((nz,nk),dtype=complex)
+a_side = ( -2/(z__[1:-1]-z__[:-2])/(z__[2:]-z__[:-2]) ).reshape((nz,1)) *np.ones((nz,nk),dtype=complex)
+c_side = ( -2/(z__[2:]-z__[1:-1])/(z__[2:]-z__[:-2])  ).reshape((nz,1)) *np.ones((nz,nk),dtype=complex)
     
 def gaussian_sp_fft_tridiag_filter(T,lc):
     kc2 = (2*np.pi/lc)**2
@@ -295,15 +307,7 @@ def get_data(var,it,axis,i):
             elif axis==2:
                 return list_f[it]['VT'][0,nz1:nz2,nx1:nx2,ny1+i].data
             
-# def get_data_streamlines(var,it,axis,i):
-#     if axis==0:
-#         return uvw[var,it,i,:,:].T
-#     elif axis==1:
-#         return uvw[var,it,:,i,:]
-#     elif axis==2:
-#         return uvw[var,it,:,:,i]
-    
-from numpy.lib.stride_tricks import as_strided
+
 def regrid_mean(a,n):
     return as_strided(a, shape= tuple(map(lambda x: int(x / n), a.shape)) + (n, n), strides=tuple(map(lambda x: x*n, a.strides)) + a.strides).mean(axis=(2,3))
 
@@ -371,7 +375,7 @@ class Player(FuncAnimation):
         self.streamlines = False
         self.quiver = False
         
-        vert_fact = vert_height/( (z[-1]-z[0])/(x[-1]-x[0]) )
+        vert_fact = vert_height/( (z_[-1]-z_[0])/(x_[-1]-x_[0]) )
         vert_left = 1/(1+vert_fact)
         vert_width = vert_fact/(1+vert_fact)
         height = width/(1+vert_fact)
@@ -389,12 +393,12 @@ class Player(FuncAnimation):
             self.ax_Z = self.fig.add_axes([0, 0, vert_left, 1],  xticks=[],yticks=[],frame_on=frame_on)
             self.ax_X = self.fig.add_axes([vert_left, 0, vert_width, vert_height],  xticks=[],yticks=[],frame_on=frame_on)
             self.ax_Y = self.fig.add_axes([vert_left, vert_height, vert_width, vert_height],  xticks=[],yticks=[],frame_on=frame_on)
-        self.ax_Z.set_xlim([x[0],x[-1]])
-        self.ax_Z.set_ylim([y[0],y[-1]])
-        self.ax_X.set_xlim([y[0],y[-1]])
-        self.ax_X.set_ylim([z[0],z[-1]])
-        self.ax_Y.set_xlim([x[0],x[-1]])
-        self.ax_Y.set_ylim([z[0],z[-1]])
+        self.ax_Z.set_xlim([x_[0],x_[-1]])
+        self.ax_Z.set_ylim([y_[0],y_[-1]])
+        self.ax_X.set_xlim([y_[0],y_[-1]])
+        self.ax_X.set_ylim([z_[0],z_[-1]])
+        self.ax_Y.set_xlim([x_[0],x_[-1]])
+        self.ax_Y.set_ylim([z_[0],z_[-1]])
         self.ax_Z.set_aspect('equal')
         self.ax_X.set_aspect('equal')
         self.ax_Y.set_aspect('equal')
