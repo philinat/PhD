@@ -20,19 +20,21 @@ plt.rcParams['toolbar'] = 'toolmanager'
 #from matplotlib.backend_bases import MousseButton
 import xarray as xr
 from numba import njit,prange
+import os
 
 floatype = np.float16
 
 # - Data LES
-simu = 'AMMA'
+# simu = 'AMMA'
 # simu = 'AMA0W'
 # simu = 'BOMEX'
-#simu = 'ABL0V'
+# simu = 'ABL0V'
+simu = 'AMOPL'
 
-relative_humidity = True
+relative_humidity = False
 wind = True
 put_in_RAM = True
-orog = False
+orog = True
 
 if simu == 'AMMA':
     path = '/cnrm/tropics/user/couvreux/POUR_NATHAN/AMMA/SIMU_LES/'
@@ -59,20 +61,25 @@ elif simu == 'BOMEX':
 
 elif simu == 'ABL0V':
     path = '/cnrm/tropics/user/philippotn/LES_ABL0V/SIMU_LES/'
-    lFiles = [path + 'ABL0V.1.SEG01.OUT.{:03d}.nc'.format(i) for i in range(200,301,20)]
-    
-savePath = '/cnrm/tropics/user/philippotn/LES_'+simu+'/figures_maps/'
+    lFiles = [path + 'ABL0V.1.SEG01.OUT.{:03d}.nc'.format(i) for i in range(50,201,50)]
+elif simu == 'AMOPL':
+    path = '/cnrm/tropics/user/philippotn/LES_AMOPL/SIMU_LES/'
+    # lFiles = [path + 'AMOPL.1.R800m.OUT.{:03d}.nc'.format(i) for i in range(1,452,10)]
+    # lFiles = [path + 'AMOPL.1.R200m.OUT.{:03d}.nc'.format(i) for i in range(10,601,10)]
+    lFiles = [path + 'AMOPL.1.R200m.OUT.{:03d}.nc'.format(i) for i in range(100,601,100)]
 
+savePath = '/cnrm/tropics/user/philippotn/LES_'+simu+'/figures_maps/'
+if not os.path.exists(savePath): os.makedirs(savePath) ; print('Directory created !')
 f0 = xr.open_dataset(lFiles[0])
 
 #%%
 
-# nx1 = 1 ; nx2 = len(f0.ni)-1
-# ny1 = 1 ; ny2 = len(f0.nj)-1
-# nz1 = 1 ; nz2 = len(f0.level)-1
+nx1 = 1 ; nx2 = len(f0.ni)-1
+ny1 = 1 ; ny2 = len(f0.nj)-1
+nz1 = 1 ; nz2 = len(f0.level)-1
 
-nx1 = 1 ; nx2 = len(f0.ni)*6//10
-ny1 = 1 ; ny2 = len(f0.nj)*6//10
+# nx1 = 1 ; nx2 = len(f0.ni)*6//10
+# ny1 = 1 ; ny2 = len(f0.nj)*6//10
 nz1 = 1 ; nz2 = len(f0.level)-24
 
 x = np.array(f0.ni)[nx1:nx2]/1000
@@ -90,7 +97,9 @@ z__ = np.array(f0.level)[nz1-1:nz2+1]/1000
 nt,nz,nx,ny = len(lFiles),len(z),len(x),len(y)
 
 if orog:
-    zs = xr.open_dataset(path+simu+'_init_pgd.nc')['ZS'][1:-1,1:-1].data
+    ZS = xr.open_dataset(path+simu+'_init_pgd_'+str(round(dx*1000))+'.nc')['ZS'][nx1:nx2,ny1:ny2].data
+    ZTOP = np.array(f0.level)[-1]
+    Z = z*1000
     
 #%%
 if relative_humidity:
@@ -118,8 +127,27 @@ if wind:
             new_var[iz] = var[io]*c0s[iz] + var[io+1]*c1s[iz]
         return new_var
 if orog:
-    def interp_on_regular_grid(var,z,zs):
-        return var
+    @njit(parallel=True)
+    def interp_on_regular_grid(var,Z,ZS,ZTOP): # var has to be np.float32 ???
+        nz,nx,ny = np.shape(var)
+        new_var = np.zeros_like(var)
+        new_var = np.full((nz,nx,ny), np.nan)
+        # new_var = np.full_like(var)
+        for i in prange(nx):
+            for j in range(ny):
+                for k in range(nz):
+                    zs = ZS[i,j]
+                    l = 0
+                    if Z[k]<zs:
+                        continue
+                    else:
+                        zm = ZTOP * (Z[k]-zs) / (ZTOP-zs)
+                        while Z[l+1]<zm:
+                            l+=1
+                        dZ = Z[l+1]-Z[l]
+                        new_var[k,i,j] = ( var[l,i,j]*(Z[l+1]-zm) + var[l+1,i,j]*(zm-Z[l]) )/dZ
+            
+        return new_var
 #%%
     
 if not(put_in_RAM):
@@ -131,8 +159,13 @@ if not(put_in_RAM):
         times.append(' {:02d}h{:02d}'.format(int(f.time.dt.hour),int(f.time.dt.minute))) # year = str(f.time.data[0])[:10]+
         
 else:
-    def npf(v,dtype=floatype):
-        return np.array(f[v][0,nz1:nz2,nx1:nx2,ny1:ny2],dtype=dtype)
+    if orog:
+        def npf(v,dtype=floatype):
+            # return interp_on_regular_grid( np.array(f[v][0,nz1:nz2,nx1:nx2,ny1:ny2],dtype=dtype) ,Z,ZS,ZTOP)
+            return np.array( interp_on_regular_grid(f[v][0,nz1:nz2,nx1:nx2,ny1:ny2].data,Z,ZS,ZTOP) ,dtype=dtype)
+    else:
+        def npf(v,dtype=floatype):
+            return np.array(f[v][0,nz1:nz2,nx1:nx2,ny1:ny2],dtype=dtype)
     
     if wind:
         data5D = np.empty((8,nt,nz,nx,ny),dtype=floatype)
@@ -159,7 +192,7 @@ else:
         ## Change potential temperature into buoyancy
         thv = theta * (1.+ 1.61*np.float32(data5D[2,it]))/(1.+np.float32(data5D[2,it]+data5D[3,it]+data5D[4,it]))
         # thv = theta * (1.+ 1.61*data5D[2,it])/(1.+data5D[2,it]+data5D[3,it]+data5D[4,it])
-        data5D[1,it] = np.float16(thv - np.mean(thv,axis=(1,2),keepdims=True))
+        data5D[1,it] = np.float16(thv - np.nanmean(thv,axis=(1,2),keepdims=True))
         # data5D[1,it] = thv - np.mean(thv,axis=(1,2),keepdims=True)
             
         if relative_humidity:
@@ -167,7 +200,7 @@ else:
             data5D[2,it] = np.float16(np.maximum(rhl,rhi))
         else:
             data5D[2,it] *= 1000
-        data5D[5,it] = np.float16(P - np.mean(P,axis=(1,2),keepdims=True))
+        data5D[5,it] = np.float16(P - np.nanmean(P,axis=(1,2),keepdims=True))
         
         ##%% Change kg/kg into g/kg
         
@@ -402,7 +435,10 @@ class Player(FuncAnimation):
         self.ax_Z.set_aspect('equal')
         self.ax_X.set_aspect('equal')
         self.ax_Y.set_aspect('equal')
-            
+        if orog:
+            self.ax_Z.set_facecolor((0., 0., 0.))
+            self.ax_Y.set_facecolor((0., 0., 0.))
+            self.ax_X.set_facecolor((0., 0., 0.))
         self.line_ZX = self.ax_Z.axvline(x[self.ix],color=line_color,ls=linestyles[1])
         self.line_ZY = self.ax_Z.axhline(y[self.iy],color=line_color,ls=linestyles[2])
         self.line_XY = self.ax_X.axvline(y[self.iy],color=line_color,ls=linestyles[2])
