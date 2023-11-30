@@ -21,8 +21,9 @@ plt.rcParams['toolbar'] = 'toolmanager'
 import xarray as xr
 from numba import njit,prange
 import os
-
+from compute_RH_lcl import RH_water_ice
 floatype = np.float16
+
 
 # - Data LES
 # simu = 'AMMA'
@@ -31,44 +32,51 @@ floatype = np.float16
 # simu = 'ABL0V'
 simu = 'AMOPL'
 
-relative_humidity = False
+# userPath = '/cnrm/tropics/user/philippotn'
+userPath = '/home/philippotn'
+
+if userPath == '/home/philippotn':
+    dataPath = userPath+'/Documents/SIMU_LES/'
+    savePath = userPath+'/Images/LES_'+simu+'/figures_maps/'
+else:
+    dataPath = userPath+'/LES_'+simu+'/SIMU_LES/'
+    savePath = userPath+'/LES_'+simu+'/figures_maps/'
+
+
 wind = True
 put_in_RAM = True
 orog = True
 
 if simu == 'AMMA':
-    path = '/cnrm/tropics/user/couvreux/POUR_NATHAN/AMMA/SIMU_LES/'
-    lFiles = [path + 'AMMH3.1.GD551.OUT.{:03d}.nc'.format(i) for i in range(300,302)]
-    # lFiles = [path + 'AMMH3.1.GD551.OUT.{:03d}.nc'.format(i) for i in range(294,322)]
-    # lFiles = [path + 'AMMH3.1.GD551.OUT.{:03d}.nc'.format(i) for i in range(315,322)]
+    dataPath = '/cnrm/tropics/user/couvreux/POUR_NATHAN/AMMA/SIMU_LES/'
+    lFiles = [dataPath + 'AMMH3.1.GD551.OUT.{:03d}.nc'.format(i) for i in range(300,302)]
+    # lFiles = [dataPath + 'AMMH3.1.GD551.OUT.{:03d}.nc'.format(i) for i in range(294,322)]
+    # lFiles = [dataPath + 'AMMH3.1.GD551.OUT.{:03d}.nc'.format(i) for i in range(315,322)]
     # else:
-    #     lFiles = [path + 'AMMA2.1.GD551.OUT.{:03d}.nc'.format(i) for i in range(1,7)] + [path + 'AMMH3.1.GD551.OUT.{:03d}.nc'.format(i) for i in range(1,361)]
+    #     lFiles = [dataPath + 'AMMA2.1.GD551.OUT.{:03d}.nc'.format(i) for i in range(1,7)] + [dataPath + 'AMMH3.1.GD551.OUT.{:03d}.nc'.format(i) for i in range(1,361)]
     
 elif simu == 'AMA0W':
-    path = '/cnrm/tropics/user/philippotn/LES_AMA0W/SIMU_LES/'
-    lFiles = [path + 'AMA0W.1.GD551.OUT.{:03d}.nc'.format(i) for i in range(1,7)] + [path + 'AMA0W.1.R6H1M.OUT.{:03d}.nc'.format(i) for i in range(1,361)]
+    lFiles = [dataPath + 'AMA0W.1.GD551.OUT.{:03d}.nc'.format(i) for i in range(1,7)] + [dataPath + 'AMA0W.1.R6H1M.OUT.{:03d}.nc'.format(i) for i in range(1,361)]
     
 elif simu == 'LBA':
-    path = '/cnrm/tropics/user/couvreux/POUR_NATHAN/LBA/SIMU_LES/'
-    lFiles = [path + 'LBA__.1.RFLES.OUT.{:03d}.nc'.format(i) for i in range(1,7)]
-    tFile = path + 'new_LBA__.1.RFLES.000.nc'
+    dataPath = '/cnrm/tropics/user/couvreux/POUR_NATHAN/LBA/SIMU_LES/'
+    lFiles = [dataPath + 'LBA__.1.RFLES.OUT.{:03d}.nc'.format(i) for i in range(1,7)]
+    tFile = dataPath + 'new_LBA__.1.RFLES.000.nc'
     
 elif simu == 'BOMEX':
-    path = '/cnrm/tropics/user/couvreux/POUR_AUDE/SIMU_MNH/bigLES/'
-    # lFiles = [path + 'L25{:02d}.1.KUAB2.OUT.{:03d}.nc'.format(i//6+1,i%6+1) for i in range(120)]
+    dataPath = '/cnrm/tropics/user/couvreux/POUR_AUDE/SIMU_MNH/bigLES/'
+    # lFiles = [dataPath + 'L25{:02d}.1.KUAB2.OUT.{:03d}.nc'.format(i//6+1,i%6+1) for i in range(120)]
     hours = np.arange(100,121,1)
-    lFiles = [path + 'L25{:02d}.1.KUAB2.OUT.{:03d}.nc'.format(i//6+1,i%6+1) for i in hours-1]
+    lFiles = [dataPath + 'L25{:02d}.1.KUAB2.OUT.{:03d}.nc'.format(i//6+1,i%6+1) for i in hours-1]
 
 elif simu == 'ABL0V':
-    path = '/cnrm/tropics/user/philippotn/LES_ABL0V/SIMU_LES/'
-    lFiles = [path + 'ABL0V.1.SEG01.OUT.{:03d}.nc'.format(i) for i in range(50,201,50)]
+    lFiles = [dataPath + 'ABL0V.1.SEG01.OUT.{:03d}.nc'.format(i) for i in range(50,201,50)]
 elif simu == 'AMOPL':
-    path = '/cnrm/tropics/user/philippotn/LES_AMOPL/SIMU_LES/'
-    # lFiles = [path + 'AMOPL.1.R800m.OUT.{:03d}.nc'.format(i) for i in range(1,452,10)]
-    # lFiles = [path + 'AMOPL.1.R200m.OUT.{:03d}.nc'.format(i) for i in range(10,601,10)]
-    lFiles = [path + 'AMOPL.1.R200m.OUT.{:03d}.nc'.format(i) for i in range(100,601,100)]
+    # lFiles = [dataPath + 'AMOPL.1.R800m.OUT.{:03d}.nc'.format(i) for i in range(1,452,10)]
+    # lFiles = [dataPath + 'AMOPL.1.R200m.OUT.{:03d}.nc'.format(i) for i in range(10,601,10)]
+    # lFiles = [dataPath + 'AMOPL.1.R200m.OUT.{:03d}.nc'.format(i) for i in range(300,601,300)]
+    lFiles = [dataPath + 'AMOPL.1.200m1.OUT.{:03d}.nc'.format(i) for i in range(240,242,1)]
 
-savePath = '/cnrm/tropics/user/philippotn/LES_'+simu+'/figures_maps/'
 if not os.path.exists(savePath): os.makedirs(savePath) ; print('Directory created !')
 f0 = xr.open_dataset(lFiles[0])
 
@@ -76,11 +84,11 @@ f0 = xr.open_dataset(lFiles[0])
 
 nx1 = 1 ; nx2 = len(f0.ni)-1
 ny1 = 1 ; ny2 = len(f0.nj)-1
-nz1 = 1 ; nz2 = len(f0.level)-1
+nz1 = 1 ; nz2 = len(f0.level)-24
 
 # nx1 = 1 ; nx2 = len(f0.ni)*6//10
 # ny1 = 1 ; ny2 = len(f0.nj)*6//10
-nz1 = 1 ; nz2 = len(f0.level)-24
+# nz1 = 0 ; nz2 = len(f0.level)-24
 
 x = np.array(f0.ni)[nx1:nx2]/1000
 y = np.array(f0.nj)[ny1:ny2]/1000
@@ -96,14 +104,13 @@ z__ = np.array(f0.level)[nz1-1:nz2+1]/1000
 
 nt,nz,nx,ny = len(lFiles),len(z),len(x),len(y)
 
+Zm = np.array(f0.level)[nz1:]
 if orog:
-    ZS = xr.open_dataset(path+simu+'_init_pgd_'+str(round(dx*1000))+'.nc')['ZS'][nx1:nx2,ny1:ny2].data
-    ZTOP = np.array(f0.level)[-1]
-    Z = z*1000
+    ZS = xr.open_dataset(dataPath+simu+'_init_R'+str(round(dx*1000))+'m_pgd.nc')['ZS'][nx1:nx2,ny1:ny2].data
+    # z = np.arange(dx/2,f0.level[nz2]/1000,dx)
+Z = z*1000
     
 #%%
-if relative_humidity:
-    from compute_RH_lcl import RH_water_ice
 if wind:
     new_z = np.linspace(dx,z[-1]-z[-1]%dx,int(z[-1]/dx))
     ios = np.zeros(len(new_z),dtype=int)
@@ -126,28 +133,50 @@ if wind:
             io=ios[iz]
             new_var[iz] = var[io]*c0s[iz] + var[io+1]*c1s[iz]
         return new_var
-if orog:
-    @njit(parallel=True)
-    def interp_on_regular_grid(var,Z,ZS,ZTOP): # var has to be np.float32 ???
-        nz,nx,ny = np.shape(var)
-        new_var = np.zeros_like(var)
-        new_var = np.full((nz,nx,ny), np.nan)
-        # new_var = np.full_like(var)
-        for i in prange(nx):
-            for j in range(ny):
-                for k in range(nz):
-                    zs = ZS[i,j]
-                    l = 0
-                    if Z[k]<zs:
-                        continue
-                    else:
-                        zm = ZTOP * (Z[k]-zs) / (ZTOP-zs)
-                        while Z[l+1]<zm:
-                            l+=1
-                        dZ = Z[l+1]-Z[l]
-                        new_var[k,i,j] = ( var[l,i,j]*(Z[l+1]-zm) + var[l+1,i,j]*(zm-Z[l]) )/dZ
-            
-        return new_var
+
+@njit(parallel=True)
+def interp_on_altitude_levels(var,Z,Zm,ZS): # var has to be np.float32 ???
+    # var (3D) =  variable defined on Zm levels with Gal-Chen and Somerville terrain-following coordinates
+    # Z (1D) =  altitude levels on which new_var in interpolated
+    # Zm (1D) = terrain-following model levels
+    # ZS (2D) = surface altitude
+    _,nx,ny = np.shape(var)
+    nz, = np.shape(Z)
+    ZTOP = Zm[-1]
+    new_var = np.full((nz,nx,ny), np.nan,dtype=var.dtype)
+    for i in prange(nx):
+        for j in range(ny):
+            for k in range(nz):
+                zs = ZS[i,j]
+                l = 0
+                if Z[k]<zs:
+                    continue
+                else:
+                    zm = ZTOP * (Z[k]-zs) / (ZTOP-zs)
+                    while Zm[l+1]<zm:
+                        l+=1
+                    dZ = Zm[l+1]-Zm[l]
+                    new_var[k,i,j] = ( var[l,i,j]*(Zm[l+1]-zm) + var[l+1,i,j]*(zm-Zm[l]) )/dZ
+    return new_var
+
+@njit(parallel=True)
+def interp_on_regular_grid(var,Z,Zm):
+    # var (3D) =  variable defined on Zm altitude levels
+    # Z (1D) =  altitude levels on which new_var in interpolated
+    # Zm (1D) = model altitude levels
+    _,nx,ny = np.shape(var)
+    nz = np.shape(Z)
+    new_var = np.zeros((nz,nx,ny),dtype=var.dtype)
+    for i in prange(nx):
+        for j in range(ny):
+            for k in range(nz):
+                l = 0
+                while Zm[l+1]<Z[k]:
+                    l+=1
+                dZ = Zm[l+1]-Zm[l]
+                new_var[k,i,j] = ( var[l,i,j]*(Zm[l+1]-Z[k]) + var[l+1,i,j]*(Z[k]-Zm[l]) )/dZ
+    return new_var
+    
 #%%
     
 if not(put_in_RAM):
@@ -159,53 +188,49 @@ if not(put_in_RAM):
         times.append(' {:02d}h{:02d}'.format(int(f.time.dt.hour),int(f.time.dt.minute))) # year = str(f.time.data[0])[:10]+
         
 else:
+    def npf(v,dtype=floatype):
+        return np.array(f[v][0,nz1:nz2,nx1:nx2,ny1:ny2],dtype=dtype)
     if orog:
-        def npf(v,dtype=floatype):
-            # return interp_on_regular_grid( np.array(f[v][0,nz1:nz2,nx1:nx2,ny1:ny2],dtype=dtype) ,Z,ZS,ZTOP)
-            return np.array( interp_on_regular_grid(f[v][0,nz1:nz2,nx1:nx2,ny1:ny2].data,Z,ZS,ZTOP) ,dtype=dtype)
+        def npf_interp(v,dtype=floatype):
+            return np.array( interp_on_altitude_levels(f[v][0,nz1:nz2,nx1:nx2,ny1:ny2].data,Z,Zm,ZS) ,dtype=dtype)
     else:
-        def npf(v,dtype=floatype):
-            return np.array(f[v][0,nz1:nz2,nx1:nx2,ny1:ny2],dtype=dtype)
+        def npf_interp(v,dtype=floatype):
+            return np.array( interp_on_regular_grid(f[v][0,nz1:nz2,nx1:nx2,ny1:ny2].data,Z) ,dtype=dtype)
     
-    if wind:
-        data5D = np.empty((8,nt,nz,nx,ny),dtype=floatype)
-    else:
-        data5D = np.empty((6,nt,nz,nx,ny),dtype=floatype)
-    
+    data5D = np.empty((11,nt,nz,nx,ny),dtype=floatype)
     times = []
     for it,fname in enumerate(lFiles):
         time0 = time.time()
         f = xr.open_dataset(fname)
         times.append(' {:02d}h{:02d}'.format(int(f.time.dt.hour),int(f.time.dt.minute))) # year = str(f.time.data[0])[:10]+
         print(times[-1],end=' ')
-        data5D[0,it] = npf('WT')
-        data5D[2,it] = npf('RVT')
-        data5D[3,it] = npf('RCT')+npf('RIT')
-        data5D[4,it] = npf('RRT')+npf('RST')+npf('RGT')
-        if wind:
-            data5D[6,it] = npf('UT')
-            data5D[7,it] = npf('VT')
         
+        RV = npf('RVT',dtype=np.float32)
+        RC = npf('RCT',dtype=np.float32)+npf('RIT',dtype=np.float32)
+        RP = npf('RRT',dtype=np.float32)+npf('RST',dtype=np.float32)+npf('RGT',dtype=np.float32)
         P = npf('PABST',dtype=np.float32)
-        theta = npf('THT',dtype=np.float32)
-        T = theta * (P/100000)**(2/7)
-        ## Change potential temperature into buoyancy
-        thv = theta * (1.+ 1.61*np.float32(data5D[2,it]))/(1.+np.float32(data5D[2,it]+data5D[3,it]+data5D[4,it]))
-        # thv = theta * (1.+ 1.61*data5D[2,it])/(1.+data5D[2,it]+data5D[3,it]+data5D[4,it])
-        data5D[1,it] = np.float16(thv - np.nanmean(thv,axis=(1,2),keepdims=True))
-        # data5D[1,it] = thv - np.mean(thv,axis=(1,2),keepdims=True)
-            
-        if relative_humidity:
-            rhl,rhi = RH_water_ice(data5D[2,it],T,P)
-            data5D[2,it] = np.float16(np.maximum(rhl,rhi))
-        else:
-            data5D[2,it] *= 1000
-        data5D[5,it] = np.float16(P - np.nanmean(P,axis=(1,2),keepdims=True))
+        TH = npf('THT',dtype=np.float32)
         
-        ##%% Change kg/kg into g/kg
+        T = TH * (P/100000)**(2/7)
+        THV = TH * (1.+ 1.61*RV)/(1.+RV+RC+RP)
+        rhl,rhi = RH_water_ice(RV,T,P)
+        RH = np.maximum(rhl,rhi)
         
-        data5D[3,it] *= 1000
-        data5D[4,it] *= 1000
+        Pz = interp_on_altitude_levels( P,Z,Zm,ZS) 
+        THVz = interp_on_altitude_levels( THV ,Z,Zm,ZS)
+        
+        ## Change kg/kg into g/kg
+        data5D[0,it] = npf_interp('WT')
+        data5D[1,it] = THVz - np.nanmean(THVz,axis=(1,2),keepdims=True)
+        data5D[2,it] = interp_on_altitude_levels(RV,Z,Zm,ZS)*1000
+        data5D[3,it] = interp_on_altitude_levels(RC,Z,Zm,ZS)*1000
+        data5D[4,it] = interp_on_altitude_levels(RP,Z,Zm,ZS)*1000
+        data5D[5,it] = Pz - np.nanmean(Pz,axis=(1,2),keepdims=True) 
+        data5D[6,it] = npf_interp('UT')
+        data5D[7,it] = npf_interp('VT')
+        data5D[8,it] = interp_on_altitude_levels(RH,Z,Zm,ZS)
+        data5D[9,it] = interp_on_altitude_levels(TH,Z,Zm,ZS)
+        data5D[10,it] = npf_interp('SVT001')
         
         print(time.ctime()[-13:-5] ,str(round(time.time()-time0,1))+' s')
         
@@ -674,6 +699,12 @@ class Player(FuncAnimation):
         self.var = 6 ; self.cmap_update() ; self.data_update()
     def var7(self,event=None):
         self.var = 7 ; self.cmap_update() ; self.data_update()
+    def var8(self,event=None):
+        self.var = 8 ; self.cmap_update() ; self.data_update()
+    def var9(self,event=None):
+        self.var = 9 ; self.cmap_update() ; self.data_update()
+    def var10(self,event=None):
+        self.var = 10 ; self.cmap_update() ; self.data_update()
     def setup(self, playerax,pv):
         divider = mpl_toolkits.axes_grid1.make_axes_locatable(playerax)
         bax = divider.append_axes("right", size="80%", pad=0.05)
@@ -721,6 +752,15 @@ class Player(FuncAnimation):
             if v==7:
                 self.button7 = matplotlib.widgets.Button(ax, label=pvar[0])
                 self.button7.on_clicked(self.var7)
+            if v==8:
+                self.button8 = matplotlib.widgets.Button(ax, label=pvar[0])
+                self.button8.on_clicked(self.var8)
+            if v==9:
+                self.button9 = matplotlib.widgets.Button(ax, label=pvar[0])
+                self.button9.on_clicked(self.var9)
+            if v==10:
+                self.button10 = matplotlib.widgets.Button(ax, label=pvar[0])
+                self.button10.on_clicked(self.var10)
                 
     def set_pos(self,i):
         self.it = int(i)#int(self.slider.val)
@@ -768,19 +808,22 @@ class Player(FuncAnimation):
         
 # Wcm = mcolors.LinearSegmentedColormap.from_list('seismic2',['k','b','c','w','y','r','k'])
 # Wcm = mcolors.LinearSegmentedColormap.from_list('seismic2',[(0.2,0.2,0.2),(0,0,1),(0,1,1),(1,1,1),(1,1,0),(1,0,0),(0.2,0.2,0.2)])
-Wcm = mcolors.LinearSegmentedColormap.from_list('seismic2',[(0,(0.2,0.2,0.2)),(0.25,(0,0,1)),(0.4,(0,1,1)),(0.5,(1,1,1)),(0.6,(1,1,0)),(0.75,(1,0,0)),(1,(0.2,0.2,0.2))])
+Wcm = 'seismic'#mcolors.LinearSegmentedColormap.from_list('seismic2',[(0,(0.2,0.2,0.2)),(0.25,(0,0,1)),(0.4,(0,1,1)),(0.5,(1,1,1)),(0.6,(1,1,0)),(0.75,(1,0,0)),(1,(0.2,0.2,0.2))])
 Tcm = 'RdBu_r'
 Rcm = 'YlGnBu'
 RHcm = 'rainbow_r'
-parametres_variables = [['w',-40,40,Wcm,'m/s','asinh',5],['$θ_v^{\prime}$',-6,6, Tcm,'K','asinh',0.15]]
-if relative_humidity:
-    parametres_variables += [['$RH$',0,100,RHcm,'%','lin']]
-else:
-    parametres_variables += [['$r_v$',0,20,Rcm,'g/kg','lin']]
+# parametres_variables = [['w',-20,20,Wcm,'m/s','asinh',5],['$θ_v^{\prime}$',-6,6, Tcm,'K','asinh',0.15]]
+parametres_variables = [['w',-10,10,Wcm,'m/s','lin'],['$θ_v^{\prime}$',-1,1, Tcm,'K','lin']]
+parametres_variables += [['$r_v$',0,20,Rcm,'g/kg','lin']]
+parametres_variables += [ ['$r_c$',0,2,Rcm,'g/kg','lin'],['$r_p$',0,2,Rcm,'g/kg','lin'] ]
+# parametres_variables += [['$p^{\prime}$',-100,100,'seismic','Pa','asinh',5]]#[  ['$p$',0,100000,'rainbow','Pa','lin']]            
+parametres_variables += [['$p^{\prime}$',-20,20,'seismic','Pa','lin']]#[  ['$p$',0,100000,'rainbow','Pa','lin']]         #
+# parametres_variables += [['u',-20,20,Wcm,'m/s','asinh',5],['v',-20,20,Wcm,'m/s','asinh',5]]
+parametres_variables += [['u',-10,10,Wcm,'m/s','lin'],['v',-10,10,Wcm,'m/s','lin']]
+parametres_variables += [['$RH$',0,100,RHcm,'%','lin']]
+parametres_variables += [['$θ$',300,330, 'rainbow','K','lin']]
+parametres_variables += [['$CS1$',0,5,'Greens','','lin']]
 
-parametres_variables += [ ['$r_c$',0,2,Rcm,'g/kg','lin'],['$r_p$',0,2,Rcm,'g/kg','lin'] ,['$p^{\prime}$',-100,100,'seismic','Pa','asinh',5]]
-if wind:
-    parametres_variables += [['u',-40,40,Wcm,'m/s','asinh',5],['v',-40,40,Wcm,'m/s','asinh',5]]
 ani = Player(parametres_variables,interval=10,ticks=True)
 
 class Interpolation_tool(ToolToggleBase):
