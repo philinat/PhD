@@ -30,10 +30,11 @@ floatype = np.float16
 # simu = 'AMA0W'
 # simu = 'BOMEX'
 # simu = 'ABL0V'
-simu = 'AMOPL'
+# simu = 'AMOPL'
+simu = 'A0W0V'
 
-# userPath = '/cnrm/tropics/user/philippotn'
-userPath = '/home/philippotn'
+userPath = '/cnrm/tropics/user/philippotn'
+# userPath = '/home/philippotn'
 
 if userPath == '/home/philippotn':
     dataPath = userPath+'/Documents/SIMU_LES/'
@@ -45,13 +46,13 @@ else:
 
 wind = True
 put_in_RAM = True
-orog = True
+orog = False
 
 if simu == 'AMMA':
-    dataPath = '/cnrm/tropics/user/couvreux/POUR_NATHAN/AMMA/SIMU_LES/'
-    lFiles = [dataPath + 'AMMH3.1.GD551.OUT.{:03d}.nc'.format(i) for i in range(300,302)]
+    # dataPath = '/cnrm/tropics/user/couvreux/POUR_NATHAN/AMMA/SIMU_LES/'
+    # lFiles = [dataPath + 'AMMH3.1.GD551.OUT.{:03d}.nc'.format(i) for i in range(300,302)]
     # lFiles = [dataPath + 'AMMH3.1.GD551.OUT.{:03d}.nc'.format(i) for i in range(294,322)]
-    # lFiles = [dataPath + 'AMMH3.1.GD551.OUT.{:03d}.nc'.format(i) for i in range(315,322)]
+    lFiles = [dataPath + 'AMMH3.1.GD551.OUT.{:03d}.nc'.format(i) for i in range(307,325,2)]
     # else:
     #     lFiles = [dataPath + 'AMMA2.1.GD551.OUT.{:03d}.nc'.format(i) for i in range(1,7)] + [dataPath + 'AMMH3.1.GD551.OUT.{:03d}.nc'.format(i) for i in range(1,361)]
     
@@ -75,8 +76,13 @@ elif simu == 'AMOPL':
     # lFiles = [dataPath + 'AMOPL.1.R800m.OUT.{:03d}.nc'.format(i) for i in range(1,452,10)]
     # lFiles = [dataPath + 'AMOPL.1.R200m.OUT.{:03d}.nc'.format(i) for i in range(10,601,10)]
     # lFiles = [dataPath + 'AMOPL.1.R200m.OUT.{:03d}.nc'.format(i) for i in range(300,601,300)]
-    lFiles = [dataPath + 'AMOPL.1.200m1.OUT.{:03d}.nc'.format(i) for i in range(240,242,1)]
-
+    # lFiles = [dataPath + 'AMOPL.1.200m1.OUT.{:03d}.nc'.format(i) for i in [240]]+[dataPath + 'AMOPL.1.200m2.OUT.{:03d}.nc'.format(i) for i in [360]]
+    lFiles = [dataPath + 'AMOPL.1.200m1.OUT.{:03d}.nc'.format(i) for i in [60, 240]]+[dataPath + 'AMOPL.1.200m2.OUT.{:03d}.nc'.format(i) for i in [180,360,540,720]]
+    # lFiles = [dataPath + 'AMOPL.1.200m1.OUT.{:03d}.nc'.format(i) for i in range(1,241,1)] + [dataPath + 'AMOPL.1.200m2.OUT.{:03d}.nc'.format(i) for i in range(1,722,1)]
+    # lFiles = [dataPath + 'AMOPL.1.200m2.OUT.{:03d}.nc'.format(i) for i in range(300,305,1)]
+elif simu== 'A0W0V':
+    lFiles = [dataPath + simu+'.1.S200m.OUT.{:03d}.nc'.format(i) for i in range(1,961,50)]
+    
 if not os.path.exists(savePath): os.makedirs(savePath) ; print('Directory created !')
 f0 = xr.open_dataset(lFiles[0])
 
@@ -88,7 +94,7 @@ nz1 = 1 ; nz2 = len(f0.level)-24
 
 # nx1 = 1 ; nx2 = len(f0.ni)*6//10
 # ny1 = 1 ; ny2 = len(f0.nj)*6//10
-# nz1 = 0 ; nz2 = len(f0.level)-24
+# nz1 = 1 ; nz2 = len(f0.level)-24
 
 x = np.array(f0.ni)[nx1:nx2]/1000
 y = np.array(f0.nj)[ny1:ny2]/1000
@@ -106,8 +112,10 @@ nt,nz,nx,ny = len(lFiles),len(z),len(x),len(y)
 
 Zm = np.array(f0.level)[nz1:]
 if orog:
-    ZS = xr.open_dataset(dataPath+simu+'_init_R'+str(round(dx*1000))+'m_pgd.nc')['ZS'][nx1:nx2,ny1:ny2].data
+    ZS = xr.open_dataset(dataPath+simu+'_init_R'+str(round(dx*1000))+'m_pgd.nc')['ZS'][ny1:ny2,nx1:nx2].data
     # z = np.arange(dx/2,f0.level[nz2]/1000,dx)
+else:
+    ZS = np.zeros((ny,nx))
 Z = z*1000
     
 #%%
@@ -189,15 +197,16 @@ if not(put_in_RAM):
         
 else:
     def npf(v,dtype=floatype):
-        return np.array(f[v][0,nz1:nz2,nx1:nx2,ny1:ny2],dtype=dtype)
+        return np.array(f[v][0,nz1:nz2,ny1:ny2,nx1:nx2],dtype=dtype)
     if orog:
         def npf_interp(v,dtype=floatype):
-            return np.array( interp_on_altitude_levels(f[v][0,nz1:nz2,nx1:nx2,ny1:ny2].data,Z,Zm,ZS) ,dtype=dtype)
+            return np.array( interp_on_altitude_levels(f[v][0,nz1:nz2,ny1:ny2,nx1:nx2].data,Z,Zm,ZS) ,dtype=dtype)
     else:
         def npf_interp(v,dtype=floatype):
-            return np.array( interp_on_regular_grid(f[v][0,nz1:nz2,nx1:nx2,ny1:ny2].data,Z) ,dtype=dtype)
+            return np.array(f[v][0,nz1:nz2,ny1:ny2,nx1:nx2],dtype=dtype)
+            # return np.array( interp_on_regular_grid(f[v][0,nz1:nz2,ny1:ny2,nx1:nx2].data,Z) ,dtype=dtype)
     
-    data5D = np.empty((11,nt,nz,nx,ny),dtype=floatype)
+    data5D = np.empty((12,nt,nz,nx,ny),dtype=floatype)
     times = []
     for it,fname in enumerate(lFiles):
         time0 = time.time()
@@ -216,7 +225,7 @@ else:
         rhl,rhi = RH_water_ice(RV,T,P)
         RH = np.maximum(rhl,rhi)
         
-        Pz = interp_on_altitude_levels( P,Z,Zm,ZS) 
+        Pz = interp_on_altitude_levels( P,Z,Zm,ZS)
         THVz = interp_on_altitude_levels( THV ,Z,Zm,ZS)
         
         ## Change kg/kg into g/kg
@@ -231,6 +240,8 @@ else:
         data5D[8,it] = interp_on_altitude_levels(RH,Z,Zm,ZS)
         data5D[9,it] = interp_on_altitude_levels(TH,Z,Zm,ZS)
         data5D[10,it] = npf_interp('SVT001')
+        # data5D[10,it] = npf_interp('clouds')
+        data5D[11,it] = npf_interp('TKET')
         
         print(time.ctime()[-13:-5] ,str(round(time.time()-time0,1))+' s')
         
@@ -282,14 +293,14 @@ def get_data(var,it,axis,i):
     if put_in_RAM:
         if floatype == np.float16:
             if axis==0:
-                return np.float32(data5D[var,it,i,:,:]).T
+                return np.float32(data5D[var,it,i,:,:])
             elif axis==1:
                 return np.float32(data5D[var,it,:,i,:])
             elif axis==2:
                 return np.float32(data5D[var,it,:,:,i])
         else:
             if axis==0:
-                return data5D[var,it,i,:,:].T
+                return data5D[var,it,i,:,:]
             elif axis==1:
                 return data5D[var,it,:,i,:]
             elif axis==2:
@@ -297,73 +308,73 @@ def get_data(var,it,axis,i):
     else:
         if var==0:
             if axis==0:
-                return list_f[it]['WT'][0,nz1+i,nx1:nx2,ny1:ny2].data.T
+                return list_f[it]['WT'][0,nz1+i,ny1:ny2,nx1:nx2].data
             elif axis==1:
-                return list_f[it]['WT'][0,nz1:nz2,nx1+i,ny1:ny2].data
+                return list_f[it]['WT'][0,nz1:nz2,ny1+i,nx1:nx2].data
             elif axis==2:
-                return list_f[it]['WT'][0,nz1:nz2,nx1:nx2,ny1+i].data
+                return list_f[it]['WT'][0,nz1:nz2,ny1:ny2,nx1+i].data
         if var==1:
             if axis==0:
-                data = list_f[it]['THT'][0,nz1+i,nx1:nx2,ny1:ny2].data.T * ( 1+0.61*list_f[it]['RVT'][0,nz1+i,nx1:nx2,ny1:ny2].data.T )
+                data = list_f[it]['THT'][0,nz1+i,ny1:ny2,nx1:nx2].data * ( 1+0.61*list_f[it]['RVT'][0,nz1+i,ny1:ny2,nx1:nx2].data )
                 return data-np.mean(data,axis=(0,1),keepdims=True) # to be replaced by 000.nc mean data
                 # return data-np.median(data,axis=(0,1),keepdims=True) # to be replaced by 000.nc mean data
             elif axis==1:
-                data = list_f[it]['THT'][0,nz1:nz2,nx1+i,ny1:ny2].data * ( 1+0.61*list_f[it]['RVT'][0,nz1:nz2,nx1+i,ny1:ny2].data )
+                data = list_f[it]['THT'][0,nz1:nz2,ny1+i,nx1:nx2].data * ( 1+0.61*list_f[it]['RVT'][0,nz1:nz2,ny1+i,nx1:nx2].data )
                 return data-np.mean(data,axis=1,keepdims=True) # to be replaced by 000.nc mean data
             elif axis==2:
-                data = list_f[it]['THT'][0,nz1:nz2,nx1:nx2,ny1+i].data * ( 1+0.61*list_f[it]['RVT'][0,nz1:nz2,nx1:nx2,ny1+i].data )
+                data = list_f[it]['THT'][0,nz1:nz2,ny1:ny2,nx1+i].data * ( 1+0.61*list_f[it]['RVT'][0,nz1:nz2,ny1:ny2,nx1+i].data )
                 return data-np.mean(data,axis=1,keepdims=True) # to be replaced by 000.nc mean data
             
         if var==2:
             if axis==0:
-                data = list_f[it]['RVT'][0,nz1+i,nx1:nx2,ny1:ny2].data.T
+                data = list_f[it]['RVT'][0,nz1+i,ny1:ny2,nx1:nx2].data
             elif axis==1:
-                data = list_f[it]['RVT'][0,nz1:nz2,nx1+i,ny1:ny2].data
+                data = list_f[it]['RVT'][0,nz1:nz2,ny1+i,nx1:nx2].data
             elif axis==2:
-                data = list_f[it]['RVT'][0,nz1:nz2,nx1:nx2,ny1+i].data
+                data = list_f[it]['RVT'][0,nz1:nz2,ny1:ny2,nx1+i].data
             return data*1000
         if var==3:
             if axis==0:
-                data = list_f[it]['RCT'][0,nz1+i,nx1:nx2,ny1:ny2].data.T + list_f[it]['RIT'][0,nz1+i,nx1:nx2,ny1:ny2].data.T
+                data = list_f[it]['RCT'][0,nz1+i,ny1:ny2,nx1:nx2].data + list_f[it]['RIT'][0,nz1+i,ny1:ny2,nx1:nx2].data
             elif axis==1:
-                data = list_f[it]['RCT'][0,nz1:nz2,nx1+i,ny1:ny2].data + list_f[it]['RIT'][0,nz1:nz2,nx1+i,ny1:ny2].data
+                data = list_f[it]['RCT'][0,nz1:nz2,ny1+i,nx1:nx2].data + list_f[it]['RIT'][0,nz1:nz2,ny1+i,nx1:nx2].data
             elif axis==2:
-                data = list_f[it]['RCT'][0,nz1:nz2,nx1:nx2,ny1+i].data + list_f[it]['RIT'][0,nz1:nz2,nx1:nx2,ny1+i].data
+                data = list_f[it]['RCT'][0,nz1:nz2,ny1:ny2,nx1+i].data + list_f[it]['RIT'][0,nz1:nz2,ny1:ny2,nx1+i].data
             return data*1000
         if var==4:
             if axis==0:
-                data = list_f[it]['RRT'][0,nz1+i,nx1:nx2,ny1:ny2].data.T + list_f[it]['RST'][0,nz1+i,nx1:nx2,ny1:ny2].data.T + list_f[it]['RGT'][0,nz1+i,nx1:nx2,ny1:ny2].data.T
+                data = list_f[it]['RRT'][0,nz1+i,ny1:ny2,nx1:nx2].data + list_f[it]['RST'][0,nz1+i,ny1:ny2,nx1:nx2].data + list_f[it]['RGT'][0,nz1+i,ny1:ny2,nx1:nx2].data
             elif axis==1:
-                data = list_f[it]['RRT'][0,nz1:nz2,nx1+i,ny1:ny2].data + list_f[it]['RST'][0,nz1:nz2,nx1+i,ny1:ny2].data + list_f[it]['RGT'][0,nz1:nz2,nx1+i,ny1:ny2].data
+                data = list_f[it]['RRT'][0,nz1:nz2,ny1+i,nx1:nx2].data + list_f[it]['RST'][0,nz1:nz2,ny1+i,nx1:nx2].data + list_f[it]['RGT'][0,nz1:nz2,ny1+i,nx1:nx2].data
             elif axis==2:
-                data = list_f[it]['RRT'][0,nz1:nz2,nx1:nx2,ny1+i].data + list_f[it]['RST'][0,nz1:nz2,nx1:nx2,ny1+i].data + list_f[it]['RGT'][0,nz1:nz2,nx1:nx2,ny1+i].data
+                data = list_f[it]['RRT'][0,nz1:nz2,ny1:ny2,nx1+i].data + list_f[it]['RST'][0,nz1:nz2,ny1:ny2,nx1+i].data + list_f[it]['RGT'][0,nz1:nz2,ny1:ny2,nx1+i].data
             return data*1000
         
         if var==5:
             if axis==0:
-                data = list_f[it]['PABST'][0,nz1+i,nx1:nx2,ny1:ny2].data.T
+                data = list_f[it]['PABST'][0,nz1+i,ny1:ny2,nx1:nx2].data
                 return data-np.mean(data,axis=(0,1),keepdims=True) # to be replaced by 000.nc mean data
             elif axis==1:
-                data = list_f[it]['PABST'][0,nz1:nz2,nx1+i,ny1:ny2].data
+                data = list_f[it]['PABST'][0,nz1:nz2,ny1+i,nx1:nx2].data
                 return data-np.mean(data,axis=1,keepdims=True) # to be replaced by 000.nc mean data
             elif axis==2:
-                data = list_f[it]['PABST'][0,nz1:nz2,nx1:nx2,ny1+i].data
+                data = list_f[it]['PABST'][0,nz1:nz2,ny1:ny2,nx1+i].data
                 return data-np.mean(data,axis=1,keepdims=True) # to be replaced by 000.nc mean data
             
         if var==6:
             if axis==0:
-                return list_f[it]['UT'][0,nz1+i,nx1:nx2,ny1:ny2].data.T
+                return list_f[it]['UT'][0,nz1+i,ny1:ny2,nx1:nx2].data
             elif axis==1:
-                return list_f[it]['UT'][0,nz1:nz2,nx1+i,ny1:ny2].data
+                return list_f[it]['UT'][0,nz1:nz2,ny1+i,nx1:nx2].data
             elif axis==2:
-                return list_f[it]['UT'][0,nz1:nz2,nx1:nx2,ny1+i].data
+                return list_f[it]['UT'][0,nz1:nz2,ny1:ny2,nx1+i].data
         if var==7:
             if axis==0:
-                return list_f[it]['VT'][0,nz1+i,nx1:nx2,ny1:ny2].data.T
+                return list_f[it]['VT'][0,nz1+i,ny1:ny2,nx1:nx2].data
             elif axis==1:
-                return list_f[it]['VT'][0,nz1:nz2,nx1+i,ny1:ny2].data
+                return list_f[it]['VT'][0,nz1:nz2,ny1+i,nx1:nx2].data
             elif axis==2:
-                return list_f[it]['VT'][0,nz1:nz2,nx1:nx2,ny1+i].data
+                return list_f[it]['VT'][0,nz1:nz2,ny1:ny2,nx1+i].data
             
 
 def regrid_mean(a,n):
@@ -419,8 +430,8 @@ class Player(FuncAnimation):
                  frame_on=True,ticks=True, vert_height=0.4 ,width=19.2, **kwargs):
         self.it = 0
         self.iz = 50
-        self.ix = nx//2
         self.iy = ny//2
+        self.ix = nx//2
         
         self.min=0
         self.max=nt-1
@@ -445,50 +456,47 @@ class Player(FuncAnimation):
             pad_down = 0.06
             pad_left = pad_down*height/width
             self.ax_Z = self.fig.add_axes([pad_left, pad_down, vert_left-pad_left, 1-pad_down], frame_on=frame_on)
-            self.ax_X = self.fig.add_axes([vert_left+pad_left, pad_down, vert_width-pad_left, vert_height-pad_down],frame_on=frame_on)
             self.ax_Y = self.fig.add_axes([vert_left+pad_left, vert_height+pad_down, vert_width-pad_left, vert_height-pad_down],frame_on=frame_on)
+            self.ax_X = self.fig.add_axes([vert_left+pad_left, pad_down, vert_width-pad_left, vert_height-pad_down],frame_on=frame_on)
         else:
             self.ax_Z = self.fig.add_axes([0, 0, vert_left, 1],  xticks=[],yticks=[],frame_on=frame_on)
-            self.ax_X = self.fig.add_axes([vert_left, 0, vert_width, vert_height],  xticks=[],yticks=[],frame_on=frame_on)
             self.ax_Y = self.fig.add_axes([vert_left, vert_height, vert_width, vert_height],  xticks=[],yticks=[],frame_on=frame_on)
+            self.ax_X = self.fig.add_axes([vert_left, 0, vert_width, vert_height],  xticks=[],yticks=[],frame_on=frame_on)
+            
         self.ax_Z.set_xlim([x_[0],x_[-1]])
         self.ax_Z.set_ylim([y_[0],y_[-1]])
-        self.ax_X.set_xlim([y_[0],y_[-1]])
-        self.ax_X.set_ylim([z_[0],z_[-1]])
         self.ax_Y.set_xlim([x_[0],x_[-1]])
         self.ax_Y.set_ylim([z_[0],z_[-1]])
+        self.ax_X.set_xlim([y_[0],y_[-1]])
+        self.ax_X.set_ylim([z_[0],z_[-1]])
         self.ax_Z.set_aspect('equal')
-        self.ax_X.set_aspect('equal')
         self.ax_Y.set_aspect('equal')
+        self.ax_X.set_aspect('equal')
         if orog:
             self.ax_Z.set_facecolor((0., 0., 0.))
             self.ax_Y.set_facecolor((0., 0., 0.))
             self.ax_X.set_facecolor((0., 0., 0.))
-        self.line_ZX = self.ax_Z.axvline(x[self.ix],color=line_color,ls=linestyles[1])
-        self.line_ZY = self.ax_Z.axhline(y[self.iy],color=line_color,ls=linestyles[2])
-        self.line_XY = self.ax_X.axvline(y[self.iy],color=line_color,ls=linestyles[2])
-        self.line_XZ = self.ax_X.axhline(z[self.iz],color=line_color,ls=linestyles[0])
-        self.line_YX = self.ax_Y.axvline(x[self.ix],color=line_color,ls=linestyles[1])
+        self.line_ZX = self.ax_Z.axvline(x[self.ix],color=line_color,ls=linestyles[2])
+        self.line_ZY = self.ax_Z.axhline(y[self.iy],color=line_color,ls=linestyles[1])
+        self.line_YX = self.ax_Y.axvline(x[self.ix],color=line_color,ls=linestyles[2])
         self.line_YZ = self.ax_Y.axhline(z[self.iz],color=line_color,ls=linestyles[0])
+        self.line_XY = self.ax_X.axvline(y[self.iy],color=line_color,ls=linestyles[1])
+        self.line_XZ = self.ax_X.axhline(z[self.iz],color=line_color,ls=linestyles[0])
         
-        legend_elements = [ [Line2D([0], [0], color=line_color,linestyle=linestyles[i], lw=1, label=lb+' plane')] for i,lb in enumerate(["X-Y","Y-Z","X-Z"]) ]
+        legend_elements = [ [Line2D([0], [0], color=line_color,linestyle=linestyles[i], lw=1, label=lb+' plane')] for i,lb in enumerate(["X-Y","X-Z","Y-Z"]) ]
         self.ax_Z.legend(handles=legend_elements[0],fancybox=True,fontsize=fs,loc='upper left')#,bbox_to_anchor=(1, 1), loc=1, borderaxespad=0)
-        self.ax_X.legend(handles=legend_elements[1],fancybox=True,fontsize=fs,loc='upper left')#,bbox_to_anchor=(1, 1), loc=1, borderaxespad=0)
-        self.ax_Y.legend(handles=legend_elements[2],fancybox=True,fontsize=fs,loc='upper left')#,bbox_to_anchor=(1, 1), loc=1, borderaxespad=0)
+        self.ax_Y.legend(handles=legend_elements[1],fancybox=True,fontsize=fs,loc='upper left')#,bbox_to_anchor=(1, 1), loc=1, borderaxespad=0)
+        self.ax_X.legend(handles=legend_elements[2],fancybox=True,fontsize=fs,loc='upper left')#,bbox_to_anchor=(1, 1), loc=1, borderaxespad=0)
         
-        if pv[var_init][5]=='lin':
-            norm=matplotlib.colors.Normalize(vmin=pv[var_init][1], vmax=pv[var_init][2])
-        elif pv[var_init][5]=='asinh':
-            norm=matplotlib.colors.AsinhNorm(linear_width=pv[var_init][6],vmin=pv[var_init][1], vmax=pv[var_init][2])
-        self.image_Z = self.ax_Z.imshow( get_data(self.var,self.it,0,self.iz) ,norm=norm, cmap=pv[var_init][3], extent=(x_[0],x_[-1],y_[0],y_[-1]), origin= 'lower', animated=animated,interpolation='none',zorder=1)
-        self.image_X = self.ax_X.pcolormesh(y_,z_, get_data(self.var,self.it,1,self.ix) ,norm=norm, cmap=pv[var_init][3], animated=animated,shading='flat',zorder=1)
-        self.image_Y = self.ax_Y.pcolormesh(x_,z_, get_data(self.var,self.it,2,self.iy) ,norm=norm, cmap=pv[var_init][3], animated=animated,shading='flat',zorder=1)
-
+        self.image_Z = self.ax_Z.imshow( get_data(self.var,self.it,0,self.iz) ,norm=self.get_norm(), cmap=self.pv[self.var][3], extent=(x_[0],x_[-1],y_[0],y_[-1]), origin= 'lower', animated=animated,interpolation='none',zorder=1)
+        self.image_Y = self.ax_Y.pcolormesh(x_,z_, get_data(self.var,self.it,1,self.iy) ,norm=self.get_norm(), cmap=self.pv[self.var][3], animated=animated,shading='flat',zorder=1)
+        self.image_X = self.ax_X.pcolormesh(y_,z_, get_data(self.var,self.it,2,self.ix) ,norm=self.get_norm(), cmap=self.pv[self.var][3], animated=animated,shading='flat',zorder=1)
+        
         
         self.clouds_levels,self.clouds_color,self.clouds_lw,self.clouds_alpha = clouds_levels,clouds_color,clouds_lw,clouds_alpha
         self.clouds = [self.ax_Z.contour(x,y,get_data(3,self.it,0,self.iz), levels=clouds_levels,colors=clouds_color,linewidths=clouds_lw,alpha=clouds_alpha),
-                       self.ax_X.contour(y,z,get_data(3,self.it,1,self.ix), levels=clouds_levels,colors=clouds_color,linewidths=clouds_lw,alpha=clouds_alpha),
-                       self.ax_Y.contour(x,z,get_data(3,self.it,2,self.iy), levels=clouds_levels,colors=clouds_color,linewidths=clouds_lw,alpha=clouds_alpha)]
+                       self.ax_Y.contour(x,z,get_data(3,self.it,1,self.iy), levels=clouds_levels,colors=clouds_color,linewidths=clouds_lw,alpha=clouds_alpha),
+                       self.ax_X.contour(y,z,get_data(3,self.it,2,self.ix), levels=clouds_levels,colors=clouds_color,linewidths=clouds_lw,alpha=clouds_alpha)]
         
         self.precip_color,self.precip_alpha = precip_color,precip_alpha
         
@@ -496,12 +504,12 @@ class Player(FuncAnimation):
         flat_precip = get_hexagonal_flat_precip(x,y,flat_Zxx,flat_Zyy,get_data(4,self.it,0,self.iz))
         select_precip = flat_precip > 10**-2
         self.precip_Z = self.ax_Z.scatter(flat_Zxx[select_precip], flat_Zyy[select_precip], s= flat_precip[select_precip]*2, c=self.precip_color,alpha=self.precip_alpha,zorder=100)
-        flat_precip = get_hexagonal_flat_precip(y,z,flat_Xyy,flat_Xzz,get_data(4,self.it,1,self.ix))
-        select_precip = flat_precip > 10**-2
-        self.precip_X = self.ax_X.scatter(flat_Xyy[select_precip], flat_Xzz[select_precip], s= flat_precip[select_precip]*2, c=self.precip_color,alpha=self.precip_alpha,zorder=100)
-        flat_precip = get_hexagonal_flat_precip(x,z,flat_Yxx,flat_Yzz,get_data(4,self.it,2,self.iy))
+        flat_precip = get_hexagonal_flat_precip(x,z,flat_Yxx,flat_Yzz,get_data(4,self.it,1,self.iy))
         select_precip = flat_precip > 10**-2
         self.precip_Y = self.ax_Y.scatter(flat_Yxx[select_precip], flat_Yzz[select_precip], s= flat_precip[select_precip]*2, c=self.precip_color,alpha=self.precip_alpha,zorder=100)
+        flat_precip = get_hexagonal_flat_precip(y,z,flat_Xyy,flat_Xzz,get_data(4,self.it,2,self.ix))
+        select_precip = flat_precip > 10**-2
+        self.precip_X = self.ax_X.scatter(flat_Xyy[select_precip], flat_Xzz[select_precip], s= flat_precip[select_precip]*2, c=self.precip_color,alpha=self.precip_alpha,zorder=100)
         
         self.stream_Z = None
         
@@ -509,16 +517,16 @@ class Player(FuncAnimation):
         flat_U = get_hexagonal_flat_precip(x,y,qv_Zxx,qv_Zyy,get_data(6,self.it,0,self.iz))
         flat_V = get_hexagonal_flat_precip(x,y,qv_Zxx,qv_Zyy,get_data(7,self.it,0,self.iz))
         self.quiver_Z = self.ax_Z.quiver(qv_Zxx,qv_Zyy,flat_V,flat_U, color=qvc,pivot=qvp,scale=qvs,scale_units=qvsu,units=qvu,width=qvw,headwidth=qvhw,headlength=qvhl,visible=False,zorder=2)
-        flat_U = get_hexagonal_flat_precip(y,z,qv_Xyy,qv_Xzz,get_data(0,self.it,1,self.ix))
-        flat_V = get_hexagonal_flat_precip(y,z,qv_Xyy,qv_Xzz,get_data(6,self.it,1,self.ix))
-        self.quiver_X = self.ax_X.quiver(qv_Xyy,qv_Xzz,flat_V,flat_U, color=qvc,pivot=qvp,scale=qvs,scale_units=qvsu,units=qvu,width=qvw,headwidth=qvhw,headlength=qvhl,visible=False,zorder=2)
-        flat_U = get_hexagonal_flat_precip(x,z,qv_Yxx,qv_Yzz,get_data(0,self.it,2,self.iy))
-        flat_V = get_hexagonal_flat_precip(x,z,qv_Yxx,qv_Yzz,get_data(7,self.it,2,self.iy))
+        flat_U = get_hexagonal_flat_precip(x,z,qv_Yxx,qv_Yzz,get_data(0,self.it,1,self.iy))
+        flat_V = get_hexagonal_flat_precip(x,z,qv_Yxx,qv_Yzz,get_data(7,self.it,1,self.iy))
         self.quiver_Y = self.ax_Y.quiver(qv_Yxx,qv_Yzz,flat_V,flat_U, color=qvc,pivot=qvp,scale=qvs,scale_units=qvsu,units=qvu,width=qvw,headwidth=qvhw,headlength=qvhl,visible=False,zorder=2)
+        flat_U = get_hexagonal_flat_precip(y,z,qv_Xyy,qv_Xzz,get_data(0,self.it,2,self.ix))
+        flat_V = get_hexagonal_flat_precip(y,z,qv_Xyy,qv_Xzz,get_data(6,self.it,2,self.ix))
+        self.quiver_X = self.ax_X.quiver(qv_Xyy,qv_Xzz,flat_V,flat_U, color=qvc,pivot=qvp,scale=qvs,scale_units=qvsu,units=qvu,width=qvw,headwidth=qvhw,headlength=qvhl,visible=False,zorder=2)
                 
         pos= [vert_left + vert_width/10 , 0.955 , 8/10*vert_width , 0.04]
         self.playerax = self.fig.add_axes(pos,  xticks=[],yticks=[],frame_on=frame_on)
-        self.setup(self.playerax , pv)
+        self.setup(self.playerax , self.pv)
         
         self.filterax = self.fig.add_axes([pos[0]+pos[2]/3,pos[1]-1*pos[3] ,pos[2]/3, pos[3] ],  xticks=[],yticks=[],frame_on=frame_on)
         self.lamda_filter = 0.
@@ -537,20 +545,24 @@ class Player(FuncAnimation):
         FuncAnimation.__init__(self,self.fig, self.update, frames=self.play(), 
                                            init_func=init_func, fargs=fargs,blit=blit,
                                            save_count=save_count, **kwargs )
-        
-    def interpolation_update(self):
+    def get_norm(self):
         if self.pv[self.var][5]=='lin':
             norm=matplotlib.colors.Normalize(vmin=self.pv[self.var][1], vmax=self.pv[self.var][2])
+        elif self.pv[self.var][5]=='log':
+            norm=matplotlib.colors.LogNorm(vmin=self.pv[self.var][1], vmax=self.pv[self.var][2])
         elif self.pv[self.var][5]=='asinh':
             norm=matplotlib.colors.AsinhNorm(linear_width=self.pv[self.var][6],vmin=self.pv[self.var][1], vmax=self.pv[self.var][2])
+        return norm
+    
+    def interpolation_update(self):
         if self.interpolation==True:
             self.image_Z.set_interpolation('bicubic')
-            self.image_X.remove() ; self.image_X = self.ax_X.pcolormesh(y,z,get_data(self.var,self.it,1,self.ix) ,norm=norm, cmap=self.pv[self.var][3],shading='gouraud',zorder=1)
-            self.image_Y.remove() ; self.image_Y = self.ax_Y.pcolormesh(x,z,get_data(self.var,self.it,2,self.iy) ,norm=norm, cmap=self.pv[self.var][3],shading='gouraud',zorder=1)
+            self.image_Y.remove() ; self.image_Y = self.ax_Y.pcolormesh(x,z,get_data(self.var,self.it,1,self.iy) ,norm=self.get_norm(), cmap=self.pv[self.var][3],shading='gouraud',zorder=1)
+            self.image_X.remove() ; self.image_X = self.ax_X.pcolormesh(y,z,get_data(self.var,self.it,2,self.ix) ,norm=self.get_norm(), cmap=self.pv[self.var][3],shading='gouraud',zorder=1)
         else:
             self.image_Z.set_interpolation('none')
-            self.image_X.remove() ; self.image_X = self.ax_X.pcolormesh(y_,z_,get_data(self.var,self.it,1,self.ix) ,norm=norm, cmap=self.pv[self.var][3],shading='flat',zorder=1)
-            self.image_Y.remove() ; self.image_Y = self.ax_Y.pcolormesh(x_,z_,get_data(self.var,self.it,2,self.iy) ,norm=norm, cmap=self.pv[self.var][3],shading='flat',zorder=1)
+            self.image_Y.remove() ; self.image_Y = self.ax_Y.pcolormesh(x_,z_,get_data(self.var,self.it,1,self.iy) ,norm=self.get_norm(), cmap=self.pv[self.var][3],shading='flat',zorder=1)
+            self.image_X.remove() ; self.image_X = self.ax_X.pcolormesh(y_,z_,get_data(self.var,self.it,2,self.ix) ,norm=self.get_norm(), cmap=self.pv[self.var][3],shading='flat',zorder=1)
         self.fig.canvas.draw_idle()
     
     def remove_clouds(self):
@@ -563,15 +575,15 @@ class Player(FuncAnimation):
     def remove_precip(self):
         if self.precip_Z is not None:
             self.precip_Z.remove()
-            self.precip_X.remove()
             self.precip_Y.remove()
+            self.precip_X.remove()
             self.precip_Z = None
     def remove_streamlines(self):
         if self.stream_Z is not None:
             self.stream_Z.lines.remove()
-            self.stream_X.lines.remove()
             self.stream_Y.lines.remove()
-            for ax in [self.ax_Z,self.ax_X,self.ax_Y]:
+            self.stream_X.lines.remove()
+            for ax in [self.ax_Z,self.ax_Y,self.ax_X]:
                 for art in ax.get_children():
                     if isinstance(art,matplotlib.patches.FancyArrowPatch):
                         art.remove()
@@ -580,63 +592,59 @@ class Player(FuncAnimation):
     def data_update(self):
         if self.lamda_filter>0.:
             self.image_Z.set_data( gaussian_filter(get_data(self.var,self.it,0,self.iz),self.lamda_filter) )
-            self.image_X.set_array( np.ravel(gaussian_sp_fft_tridiag_filter(get_data(self.var,self.it,1,self.ix),self.lamda_filter),order='C') )
-            self.image_Y.set_array( np.ravel(gaussian_sp_fft_tridiag_filter(get_data(self.var,self.it,2,self.iy),self.lamda_filter),order='C') )
+            self.image_Y.set_array( np.ravel(gaussian_sp_fft_tridiag_filter(get_data(self.var,self.it,1,self.iy),self.lamda_filter),order='C') )
+            self.image_X.set_array( np.ravel(gaussian_sp_fft_tridiag_filter(get_data(self.var,self.it,2,self.ix),self.lamda_filter),order='C') )
         else:
             self.image_Z.set_data( get_data(self.var,self.it,0,self.iz) )
-            self.image_X.set_array( np.ravel(get_data(self.var,self.it,1,self.ix),order='C') )
-            self.image_Y.set_array( np.ravel(get_data(self.var,self.it,2,self.iy),order='C') )
+            self.image_Y.set_array( np.ravel(get_data(self.var,self.it,1,self.iy),order='C') )
+            self.image_X.set_array( np.ravel(get_data(self.var,self.it,2,self.ix),order='C') )
         
         if self.clouds_contour:
             self.remove_clouds()
             self.clouds = [self.ax_Z.contour(x,y,get_data(3,self.it,0,self.iz), levels=self.clouds_levels,colors=self.clouds_color,linewidths=self.clouds_lw,alpha=self.clouds_alpha),
-                          self.ax_X.contour(y,z,get_data(3,self.it,1,self.ix), levels=self.clouds_levels,colors=self.clouds_color,linewidths=self.clouds_lw,alpha=self.clouds_alpha),
-                          self.ax_Y.contour(x,z,get_data(3,self.it,2,self.iy), levels=self.clouds_levels,colors=self.clouds_color,linewidths=self.clouds_lw,alpha=self.clouds_alpha)]
+                          self.ax_Y.contour(x,z,get_data(3,self.it,1,self.iy), levels=self.clouds_levels,colors=self.clouds_color,linewidths=self.clouds_lw,alpha=self.clouds_alpha),
+                          self.ax_X.contour(y,z,get_data(3,self.it,2,self.ix), levels=self.clouds_levels,colors=self.clouds_color,linewidths=self.clouds_lw,alpha=self.clouds_alpha)]
             
         if self.precip_dots:
             self.remove_precip()
             flat_precip = get_hexagonal_flat_precip(x,y,flat_Zxx,flat_Zyy,get_data(4,self.it,0,self.iz))
             select_precip = flat_precip > 10**-2
             self.precip_Z = self.ax_Z.scatter(flat_Zxx[select_precip], flat_Zyy[select_precip], s= flat_precip[select_precip]*2, c=self.precip_color,alpha=self.precip_alpha,zorder=100)
-            flat_precip = get_hexagonal_flat_precip(y,z,flat_Xyy,flat_Xzz,get_data(4,self.it,1,self.ix))
-            select_precip = flat_precip > 10**-2
-            self.precip_X = self.ax_X.scatter(flat_Xyy[select_precip], flat_Xzz[select_precip], s= flat_precip[select_precip]*2, c=self.precip_color,alpha=self.precip_alpha,zorder=100)
-            flat_precip = get_hexagonal_flat_precip(x,z,flat_Yxx,flat_Yzz,get_data(4,self.it,2,self.iy))
+            flat_precip = get_hexagonal_flat_precip(x,z,flat_Yxx,flat_Yzz,get_data(4,self.it,1,self.iy))
             select_precip = flat_precip > 10**-2
             self.precip_Y = self.ax_Y.scatter(flat_Yxx[select_precip], flat_Yzz[select_precip], s= flat_precip[select_precip]*2, c=self.precip_color,alpha=self.precip_alpha,zorder=100)
+            flat_precip = get_hexagonal_flat_precip(y,z,flat_Xyy,flat_Xzz,get_data(4,self.it,2,self.ix))
+            select_precip = flat_precip > 10**-2
+            self.precip_X = self.ax_X.scatter(flat_Xyy[select_precip], flat_Xzz[select_precip], s= flat_precip[select_precip]*2, c=self.precip_color,alpha=self.precip_alpha,zorder=100)
             
         if self.streamlines:
             self.remove_streamlines()
             U = get_data(6,self.it,0,self.iz) ; V = get_data(7,self.it,0,self.iz)
             self.stream_Z = self.ax_Z.streamplot(x, y,V,U,density=1., color='k', linewidth=np.sqrt(U**2+V**2)/10) #
-            U = interp_vertical(get_data(6,self.it,1,self.ix),ios,c0s,c1s) ; V = interp_vertical(get_data(0,self.it,1,self.ix),ios,c0s,c1s)
-            self.stream_X = self.ax_X.streamplot(y, new_z, U,V,density=2., color='k', linewidth=np.sqrt(U**2+V**2)/10)
-            U = interp_vertical(get_data(7,self.it,2,self.iy),ios,c0s,c1s) ; V = interp_vertical(get_data(0,self.it,2,self.iy),ios,c0s,c1s)
+            U = interp_vertical(get_data(6,self.it,1,self.iy),ios,c0s,c1s) ; V = interp_vertical(get_data(0,self.it,1,self.iy),ios,c0s,c1s)
             self.stream_Y = self.ax_Y.streamplot(x, new_z, U,V ,density=2., color='k', linewidth=np.sqrt(U**2+V**2)/10)
+            U = interp_vertical(get_data(7,self.it,2,self.ix),ios,c0s,c1s) ; V = interp_vertical(get_data(0,self.it,2,self.ix),ios,c0s,c1s)
+            self.stream_X = self.ax_X.streamplot(y, new_z, U,V,density=2., color='k', linewidth=np.sqrt(U**2+V**2)/10)
             
         if self.quiver:
             flat_U = get_hexagonal_flat_precip(x,y,qv_Zxx,qv_Zyy,get_data(6,self.it,0,self.iz))
             flat_V = get_hexagonal_flat_precip(x,y,qv_Zxx,qv_Zyy,get_data(7,self.it,0,self.iz))
-            self.quiver_Z.set_UVC(flat_V,flat_U)
-            flat_U = get_hexagonal_flat_precip(y,z,qv_Xyy,qv_Xzz,get_data(0,self.it,1,self.ix))
-            flat_V = get_hexagonal_flat_precip(y,z,qv_Xyy,qv_Xzz,get_data(6,self.it,1,self.ix))
-            self.quiver_X.set_UVC(flat_V,flat_U)
-            flat_U = get_hexagonal_flat_precip(x,z,qv_Yxx,qv_Yzz,get_data(0,self.it,2,self.iy))
-            flat_V = get_hexagonal_flat_precip(x,z,qv_Yxx,qv_Yzz,get_data(7,self.it,2,self.iy))
-            self.quiver_Y.set_UVC(flat_V,flat_U)
+            self.quiver_Z.set_UVC(flat_U,flat_V)
+            flat_U = get_hexagonal_flat_precip(x,z,qv_Yxx,qv_Yzz,get_data(6,self.it,1,self.iy))
+            flat_V = get_hexagonal_flat_precip(x,z,qv_Yxx,qv_Yzz,get_data(0,self.it,1,self.iy))
+            self.quiver_Y.set_UVC(flat_U,flat_V)
+            flat_U = get_hexagonal_flat_precip(y,z,qv_Xyy,qv_Xzz,get_data(7,self.it,2,self.ix))
+            flat_V = get_hexagonal_flat_precip(y,z,qv_Xyy,qv_Xzz,get_data(0,self.it,2,self.ix))
+            self.quiver_X.set_UVC(flat_U,flat_V)
         self.fig.canvas.draw_idle()
 
     def cmap_update(self):
-        if self.pv[self.var][5]=='lin':
-            norm=matplotlib.colors.Normalize(vmin=self.pv[self.var][1], vmax=self.pv[self.var][2])
-        elif self.pv[self.var][5]=='asinh':
-            norm=matplotlib.colors.AsinhNorm(linear_width=self.pv[self.var][6],vmin=self.pv[self.var][1], vmax=self.pv[self.var][2])
-        self.image_Z.set_norm(norm)
-        self.image_X.set_norm(norm)
-        self.image_Y.set_norm(norm)
+        self.image_Z.set_norm(self.get_norm())
+        self.image_Y.set_norm(self.get_norm())
+        self.image_X.set_norm(self.get_norm())
         self.image_Z.set_cmap(self.pv[self.var][3])
-        self.image_X.set_cmap(self.pv[self.var][3])
         self.image_Y.set_cmap(self.pv[self.var][3])
+        self.image_X.set_cmap(self.pv[self.var][3])
         self.CB.set_label(self.pv[self.var][0]+'  '+self.pv[self.var][4])
         
     def play(self):
@@ -705,6 +713,8 @@ class Player(FuncAnimation):
         self.var = 9 ; self.cmap_update() ; self.data_update()
     def var10(self,event=None):
         self.var = 10 ; self.cmap_update() ; self.data_update()
+    def var11(self,event=None):
+        self.var = 11 ; self.cmap_update() ; self.data_update()
     def setup(self, playerax,pv):
         divider = mpl_toolkits.axes_grid1.make_axes_locatable(playerax)
         bax = divider.append_axes("right", size="80%", pad=0.05)
@@ -761,6 +771,9 @@ class Player(FuncAnimation):
             if v==10:
                 self.button10 = matplotlib.widgets.Button(ax, label=pvar[0])
                 self.button10.on_clicked(self.var10)
+            if v==11:
+                self.button11 = matplotlib.widgets.Button(ax, label=pvar[0])
+                self.button11.on_clicked(self.var11)
                 
     def set_pos(self,i):
         self.it = int(i)#int(self.slider.val)
@@ -785,16 +798,16 @@ class Player(FuncAnimation):
                 self.iy = np.argmin(np.abs(y - event.ydata)) ; self.line_ZY.set_ydata(y[self.iy]) ; self.line_XY.set_xdata(y[self.iy]) ; self.data_update() ; self.fig.canvas.draw_idle()
             if event.button == 1:
                 self.ix = np.argmin(np.abs(x - event.xdata)) ; self.line_ZX.set_xdata(x[self.ix]) ; self.line_YX.set_xdata(x[self.ix]) ; self.data_update() ; self.fig.canvas.draw_idle()
-        if event.inaxes == self.ax_X:
-            if event.button == 3:
-                self.iz = np.argmin(np.abs(z - event.ydata)) ; self.line_XZ.set_ydata(z[self.iz]) ; self.line_YZ.set_ydata(z[self.iz]) ; self.data_update() ; self.fig.canvas.draw_idle()
-            if event.button == 1:
-                self.iy = np.argmin(np.abs(y - event.xdata)) ; self.line_XY.set_xdata(y[self.iy]) ; self.line_ZY.set_ydata(y[self.iy]) ; self.data_update() ; self.fig.canvas.draw_idle()
         if event.inaxes == self.ax_Y:
             if event.button == 3:
                 self.iz = np.argmin(np.abs(z - event.ydata)) ; self.line_YZ.set_ydata(z[self.iz]) ; self.line_XZ.set_ydata(z[self.iz]) ; self.data_update() ; self.fig.canvas.draw_idle()
             if event.button == 1:
                 self.ix = np.argmin(np.abs(x - event.xdata)) ; self.line_YX.set_xdata(x[self.ix]) ; self.line_ZX.set_xdata(x[self.ix]) ; self.data_update() ; self.fig.canvas.draw_idle()
+        if event.inaxes == self.ax_X:
+            if event.button == 3:
+                self.iz = np.argmin(np.abs(z - event.ydata)) ; self.line_XZ.set_ydata(z[self.iz]) ; self.line_YZ.set_ydata(z[self.iz]) ; self.data_update() ; self.fig.canvas.draw_idle()
+            if event.button == 1:
+                self.iy = np.argmin(np.abs(y - event.xdata)) ; self.line_XY.set_xdata(y[self.iy]) ; self.line_ZY.set_ydata(y[self.iy]) ; self.data_update() ; self.fig.canvas.draw_idle()
                 
         if event.inaxes == self.ax_CB:
             if event.button == 3:
@@ -806,9 +819,10 @@ class Player(FuncAnimation):
                 self.pv[self.var][2] /= self.CB_fact
                 self.cmap_update() ; self.fig.canvas.draw_idle()
         
+# Wcm = 'seismic'
 # Wcm = mcolors.LinearSegmentedColormap.from_list('seismic2',['k','b','c','w','y','r','k'])
 # Wcm = mcolors.LinearSegmentedColormap.from_list('seismic2',[(0.2,0.2,0.2),(0,0,1),(0,1,1),(1,1,1),(1,1,0),(1,0,0),(0.2,0.2,0.2)])
-Wcm = 'seismic'#mcolors.LinearSegmentedColormap.from_list('seismic2',[(0,(0.2,0.2,0.2)),(0.25,(0,0,1)),(0.4,(0,1,1)),(0.5,(1,1,1)),(0.6,(1,1,0)),(0.75,(1,0,0)),(1,(0.2,0.2,0.2))])
+Wcm = mcolors.LinearSegmentedColormap.from_list('seismic2',[(0,(0.2,0.2,0.2)),(0.25,(0,0,1)),(0.4,(0,1,1)),(0.5,(1,1,1)),(0.6,(1,1,0)),(0.75,(1,0,0)),(1,(0.2,0.2,0.2))])
 Tcm = 'RdBu_r'
 Rcm = 'YlGnBu'
 RHcm = 'rainbow_r'
@@ -821,8 +835,9 @@ parametres_variables += [['$p^{\prime}$',-20,20,'seismic','Pa','lin']]#[  ['$p$'
 # parametres_variables += [['u',-20,20,Wcm,'m/s','asinh',5],['v',-20,20,Wcm,'m/s','asinh',5]]
 parametres_variables += [['u',-10,10,Wcm,'m/s','lin'],['v',-10,10,Wcm,'m/s','lin']]
 parametres_variables += [['$RH$',0,100,RHcm,'%','lin']]
-parametres_variables += [['$θ$',300,330, 'rainbow','K','lin']]
-parametres_variables += [['$CS1$',0,5,'Greens','','lin']]
+parametres_variables += [['$θ$',310,320, 'rainbow','K','lin']]
+parametres_variables += [['$CS1$',1e-4,10,'Greens','','log']]
+parametres_variables += [['$TKE$',1e-4,10,'Reds','','log']]
 
 ani = Player(parametres_variables,interval=10,ticks=True)
 

@@ -32,7 +32,8 @@ else:
     
 if simu == 'AMOPL':
     # lFiles = [dataPath + 'AMOPL.1.R200m.OUT.{:03d}.nc'.format(i) for i in range(100,601,100)]
-    lFiles = [dataPath + 'AMOPL.1.200m1.OUT.{:03d}.nc'.format(i) for i in [60,240]]+[dataPath + 'AMOPL.1.200m2.OUT.{:03d}.nc'.format(i) for i in [180,360,540,720]]
+    # lFiles = [dataPath + 'AMOPL.1.200m1.OUT.{:03d}.nc'.format(i) for i in [60,240]]+[dataPath + 'AMOPL.1.200m2.OUT.{:03d}.nc'.format(i) for i in [180,360,540,720]]
+    lFiles = [dataPath + 'AMOPL.1.200m1.OUT.{:03d}.nc'.format(i) for i in range(60,241,60)]+[dataPath + 'AMOPL.1.200m2.OUT.{:03d}.nc'.format(i) for i in range(60,721,60)]
     # lFiles = [dataPath + 'AMOPL.1.200m1.OUT.{:03d}.nc'.format(i) for i in range(1,241,1)] + [dataPath + 'AMOPL.1.200m2.OUT.{:03d}.nc'.format(i) for i in range(1,722,1)]
 
 
@@ -48,11 +49,14 @@ nz1 = 1 ; nz2 = len(f0.level)
 x = np.array(f0.ni)[nx1:nx2]
 y = np.array(f0.nj)[ny1:ny2]
 z = np.array(f0.level)[nz1:nz2]
+X,Y = np.meshgrid(x,y)
 
 dx=x[1]-x[0]
 nz,nx,ny = len(z),len(x),len(y)
 
-X,Y = np.meshgrid(x,y)
+z_ = np.array(f0.level_w)[nz1:nz2]
+dz = z_[1:]-z_[:-1]
+dz = np.append(dz,dz[-1])
 
 ddot = 3*dx
 xf = np.arange(x[0],x[-1]-ddot/2,ddot)
@@ -136,12 +140,77 @@ def object_top(objects):
                 if obj>0 and top[obj]==nz-1: # Compute mean position only for clouds (not for environment)
                     top[obj] = h
     return top
+
+@njit()
+def get_crest(ZS):
+    ny,nx = np.shape(ZS)
+    crest = np.full((ny,nx),np.nan)
+    for j in range(1,ny-1):
+        for i in range(1,nx-1):
+            nb_higher_neighbour = 0
+            if ZS[j+1,i] >= ZS[j,i]: nb_higher_neighbour += 1
+            if ZS[j-1,i] >= ZS[j,i]: nb_higher_neighbour += 1
+            if ZS[j,i+1] >= ZS[j,i]: nb_higher_neighbour += 1
+            if ZS[j,i-1] >= ZS[j,i]: nb_higher_neighbour += 1
+            if nb_higher_neighbour<=1 and 4*ZS[j,i]-ZS[j+1,i]-ZS[j-1,i]-ZS[j,i+1]-ZS[j,i-1] > dx/2:
+                crest[j,i] = 1
+            
+    return crest
+
+@njit()
+def integrated_mass(z,dz,ZS,var,rho): # var has to be kg/kg
+    ny,nx = np.shape(ZS)
+    mass = np.zeros((ny,nx),dtype=np.float32)
+    ZTOP = z[-1]
+    for j in range(ny):
+        for i in range(nx):
+            coef = (ZTOP-ZS[j,i])/ZTOP
+            for h in range(len(z)):
+                mass[j,i] += var[h,j,i] * rho[h,j,i] * coef*dz[h]
+    return mass
+
+@njit()
+def mean_layer(z,dz,ZS,var,zmax): # var has to be kg/kg
+    ny,nx = np.shape(ZS)
+    mass = np.zeros((ny,nx),dtype=np.float32)
+    ZTOP = z[-1]
+    for j in range(ny):
+        for i in range(nx):
+            coef = (ZTOP-ZS[j,i])/ZTOP
+            for h in range(len(z)):
+                mass[j,i] += var[h,j,i] * rho[h,j,i] * coef*dz[h]
+    return mass
+
+#%%
+# @njit()
+# def get_crest(ZS):
+#     ny,nx = np.shape(ZS)
+#     crest = np.full((ny,nx),np.nan)
+#     for j in range(1,ny-1):
+#         for i in range(1,nx-1):
+#             nb_higher_neighbour = 0
+#             if ZS[j+1,i] >= ZS[j,i]: nb_higher_neighbour += 1
+#             if ZS[j-1,i] >= ZS[j,i]: nb_higher_neighbour += 1
+#             if ZS[j,i+1] >= ZS[j,i]: nb_higher_neighbour += 1
+#             if ZS[j,i-1] >= ZS[j,i]: nb_higher_neighbour += 1
+#             if nb_higher_neighbour<=1 and 4*ZS[j,i]-ZS[j+1,i]-ZS[j-1,i]-ZS[j,i+1]-ZS[j,i-1] > dx/2:
+#                 crest[j,i] = 1
+            
+#     return crest
+
+# crest = get_crest(ZS)
+# plt.figure(figsize=(16.2,10.8))
+# plt.imshow(crest)
+
+#%%
+# plt.plot(np.log10(np.mean(TR[:,:,nx//4:3*nx//4],axis=(1,2))),z)
+# plt.plot(np.mean(W[:,:,nx//4:3*nx//4],axis=(1,2)),z)
 #%%
 # def plot_video(lFiles):
 ft=20
 fig=plt.figure(figsize=(16.2,10.8))
 ax=fig.add_axes([0.05,0., 2/3, 1.])
-    
+shaded_relief = True
 for it,fname in enumerate(lFiles):
     ax.clear()
     ax.set_aspect("equal")
@@ -162,8 +231,11 @@ for it,fname in enumerate(lFiles):
     TH = npf('THT')
     RV = npf('RVT')
     RC = npf('RCT') + npf('RIT')
-    RP = npf('RRT')# + npf('RST') + npf('RGT')
+    RP = npf('RRT') + npf('RST') + npf('RGT')
     P = npf('PABST')
+    TR = npf('SVT001')
+    W = npf('WT')
+    U = npf('UT')
     
     THV = TH * (1+ 1.61*RV)/(1+RV+RC+RP)
     Rd = 287.04     # J/kg/K 
@@ -177,24 +249,28 @@ for it,fname in enumerate(lFiles):
     # SURF = 1
     # THV_SURF = TH[SURF] * (1+ 1.61*RV[SURF])/(1+RV[SURF]+RP[SURF])
     # anom_thetav_SURF = thetav_SURF - np.mean(thetav_SURF,axis=(0,1))
+    # T_cf = ax.pcolormesh(X/1000,Y/1000,anom_thetav_SURF,norm=matplotlib.colors.AsinhNorm(linear_width=0.15,vmin=-6, vmax=6),cmap='RdBu_r',shading='gouraud')
     
+    total_water_path = integrated_mass(z,dz,ZS,RV+RC+RP,RHO)
+    tracer_path = integrated_mass(z,dz,ZS,TR,RHO)
     
     print(" ---- Surface ready",end='')
-    BLH_cf = ax.imshow(BLH,cmap='rainbow',visible=False,vmin=0.,vmax=4000.,origin='lower',extent=[x[0]/1000,x[-1]/1000,y[0]/1000,y[-1]/1000])
-    # BLH_cf = ax.pcolormesh(X/1000,Y/1000,BLH,vmin=0.,vmax=4000.,cmap='rainbow',shading='gouraud')
-    
-    
-
-    cmap = matplotlib.cm.get_cmap('rainbow')
-    # ccmap = im.get_cmap() #it is a function
-    im_rgb = cmap(BLH/4000)[:,:,:3]
-    rgb = ls.shade_rgb(im_rgb,ZS,blend_mode='soft',vert_exag=0.1 )
-    ax.imshow( rgb ,origin='lower',extent=[x[0]/1000,x[-1]/1000,y[0]/1000,y[-1]/1000] )
-    # T_cf = ax.pcolormesh(X/1000,Y/1000,anom_thetav_SURF,norm=matplotlib.colors.AsinhNorm(linear_width=0.15,vmin=-6, vmax=6),cmap='RdBu_r',shading='gouraud')
+    if shaded_relief:
+        BLH_cf = ax.imshow(BLH,cmap='rainbow',visible=False,vmin=0.,vmax=4000.,origin='lower',extent=[x[0]/1000,x[-1]/1000,y[0]/1000,y[-1]/1000])
+        cmap = matplotlib.cm.get_cmap('rainbow')
+        im_rgb = cmap(BLH/4000)[:,:,:3]
+        rgb = ls.shade_rgb(im_rgb,ZS,blend_mode='soft',vert_exag=0.1 )
+        ax.imshow( rgb ,origin='lower',extent=[x[0]/1000,x[-1]/1000,y[0]/1000,y[-1]/1000] )
+        
+    else:
+        # BLH_cf = ax.imshow(BLH,cmap='rainbow',visible=True,vmin=0.,vmax=4000.,origin='lower',extent=[x[0]/1000,x[-1]/1000,y[0]/1000,y[-1]/1000])
+        BLH_cf = ax.pcolormesh(X/1000,Y/1000,BLH,vmin=0.,vmax=4000.,cmap='rainbow',shading='gouraud')
 
     ax.scatter(flat_X[select_precip]/1000, flat_Y[select_precip]/1000, s= flat_precip[select_precip]*5e2, c='black',zorder=100)
     
     ax.contour(X/1000,Y/1000,cloud_base_mask, levels=[0.5],linewidths=2,alpha=1,colors=['k'])#,colors=[CTcm( (z[cloud_top[obj]]/1000 -ct_lev[0])/ct_lev[-1] )])
+    
+    # ax.contour(X/1000,Y/1000,ZS, levels=np.arange(0,3000,200),linewidths=1.,alpha=0.5,colors=['k'])
     
     if fname == lFiles[0]:
         cax=fig.add_axes([0.75,0.02, 0.03, 0.7])

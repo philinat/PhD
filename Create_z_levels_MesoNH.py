@@ -8,20 +8,30 @@ Created on Mon Oct 23 16:10:21 2023
 import matplotlib.pyplot as plt
 import numpy as np
 
-dx = 300
-ZEPONGE = 16_500
+dx = 200
+
+dzBL = 50
+ZBL = 3500
+
 ZTOP = 20_000
+
+# ZEPONGE = 16_500
+ZEPONGE = ZTOP
 
 z = 0.
 dz = 10.
-stretching = 1.2 # increase of dz by 20% 
+stretching = 1.15 # increase of dz by 20% 
 
 list_z = np.array([z])
 while z < ZTOP:
     z += dz
-    if dz<dx or z>ZEPONGE:
+    if z<ZBL:
+        if dz<dzBL:
+            dz = min(dzBL,dz*stretching)
+    elif dz<dx:
+        dz = min(dx,dz*stretching)
+    if z>ZEPONGE:
         dz *= stretching
-    if dz>dx and z<ZEPONGE: dz=dx
     list_z = np.append(list_z,z)
 
 nz = len(list_z)
