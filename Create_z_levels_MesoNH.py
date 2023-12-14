@@ -8,22 +8,24 @@ Created on Mon Oct 23 16:10:21 2023
 import matplotlib.pyplot as plt
 import numpy as np
 
-dx = 200
+dx = 100
+ZTOP = 5_500
 
 dzBL = 50
-ZBL = 3500
-
-ZTOP = 20_000
+# ZBL = 3500
+ZBL = ZTOP
 
 # ZEPONGE = 16_500
+# ZEPONGE = ZBL
 ZEPONGE = ZTOP
 
 z = 0.
 dz = 10.
 stretching = 1.15 # increase of dz by 20% 
 
-list_z = np.array([z])
+list_z = []
 while z < ZTOP:
+    list_z.append(z)
     z += dz
     if z<ZBL:
         if dz<dzBL:
@@ -32,8 +34,8 @@ while z < ZTOP:
         dz = min(dx,dz*stretching)
     if z>ZEPONGE:
         dz *= stretching
-    list_z = np.append(list_z,z)
-
+    
+list_z = np.array(list_z)
 nz = len(list_z)
 list_dz = list_z[1:]-list_z[:-1]
 plt.plot(np.arange(nz),list_z )

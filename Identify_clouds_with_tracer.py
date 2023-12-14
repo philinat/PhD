@@ -12,7 +12,8 @@ from numba import njit,prange
 import xarray as xr
 
 # - Data LES
-simu = 'AMOPL'
+# simu = 'AMOPL'
+simu = 'ATRI2'
 
 userPath = '/cnrm/tropics/user/philippotn'
 # userPath = '/home/philippotn'
@@ -22,14 +23,17 @@ if userPath == '/home/philippotn':
     sys.path.append(userPath+'/Documents/Codes_python/objects-master/src/')
     
 else:
-    dataPath = userPath+'/LES_'+simu+'/SIMU_LES/'
+    dataPath = userPath+'/LES_'+simu+'/NO_SAVE/'
     sys.path.append(userPath+'/Code_LES/objects-master/src/')
 
 from identification_methods import identify
 
 
 if simu == 'AMOPL':
-    lFiles = [dataPath + 'AMOPL.1.200m1.OUT.{:03d}.nc'.format(i) for i in [60,240]]+[dataPath + 'AMOPL.1.200m2.OUT.{:03d}.nc'.format(i) for i in [180,360,540,720]]
+    lFiles = [dataPath + 'AMOPL.1.200m2.OUT.{:03d}.nc'.format(i) for i in [1,181,361,541,721]]
+elif simu== 'ATRI2':
+    lFiles = [dataPath + simu+'.1.S200m.OUT.{:03d}.nc'.format(i) for i in range(1,962,60)]
+    
 f0 = xr.open_dataset(lFiles[0])
 z = np.array(f0.level)
 #%% --------- identify -----

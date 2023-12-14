@@ -31,7 +31,13 @@ floatype = np.float16
 # simu = 'BOMEX'
 # simu = 'ABL0V'
 # simu = 'AMOPL'
-simu = 'A0W0V'
+# simu = 'A0W0V'
+# simu = 'ATRI2'
+# simu = 'ACON2'
+# simu = 'AMO20'
+simu = 'CTRI2'
+# simu = 'CFLAT'
+# simu = 'CMO10'
 
 userPath = '/cnrm/tropics/user/philippotn'
 # userPath = '/home/philippotn'
@@ -40,13 +46,13 @@ if userPath == '/home/philippotn':
     dataPath = userPath+'/Documents/SIMU_LES/'
     savePath = userPath+'/Images/LES_'+simu+'/figures_maps/'
 else:
-    dataPath = userPath+'/LES_'+simu+'/SIMU_LES/'
+    dataPath = userPath+'/LES_'+simu+'/NO_SAVE/'
     savePath = userPath+'/LES_'+simu+'/figures_maps/'
 
 
 wind = True
 put_in_RAM = True
-orog = False
+orog = True
 
 if simu == 'AMMA':
     # dataPath = '/cnrm/tropics/user/couvreux/POUR_NATHAN/AMMA/SIMU_LES/'
@@ -73,6 +79,7 @@ elif simu == 'BOMEX':
 elif simu == 'ABL0V':
     lFiles = [dataPath + 'ABL0V.1.SEG01.OUT.{:03d}.nc'.format(i) for i in range(50,201,50)]
 elif simu == 'AMOPL':
+    seg = 'R200m'
     # lFiles = [dataPath + 'AMOPL.1.R800m.OUT.{:03d}.nc'.format(i) for i in range(1,452,10)]
     # lFiles = [dataPath + 'AMOPL.1.R200m.OUT.{:03d}.nc'.format(i) for i in range(10,601,10)]
     # lFiles = [dataPath + 'AMOPL.1.R200m.OUT.{:03d}.nc'.format(i) for i in range(300,601,300)]
@@ -81,7 +88,19 @@ elif simu == 'AMOPL':
     # lFiles = [dataPath + 'AMOPL.1.200m1.OUT.{:03d}.nc'.format(i) for i in range(1,241,1)] + [dataPath + 'AMOPL.1.200m2.OUT.{:03d}.nc'.format(i) for i in range(1,722,1)]
     # lFiles = [dataPath + 'AMOPL.1.200m2.OUT.{:03d}.nc'.format(i) for i in range(300,305,1)]
 elif simu== 'A0W0V':
-    lFiles = [dataPath + simu+'.1.S200m.OUT.{:03d}.nc'.format(i) for i in range(1,961,50)]
+    seg = 'S200m' ; lFiles = [dataPath + simu+'.1.'+seg+'.OUT.{:03d}.nc'.format(i) for i in range(1,962,60)]
+elif simu== 'ATRI2':
+    seg = 'S200m' ; lFiles = [dataPath + simu+'.1.'+seg+'.OUT.{:03d}.nc'.format(i) for i in range(1,962,60)]
+elif simu== 'ACON2':
+    seg = 'S200m' ; lFiles = [dataPath + simu+'.1.'+seg+'.OUT.{:03d}.nc'.format(i) for i in range(1,962,60)]
+elif simu== 'AMO20':
+    seg = 'M200m' ; lFiles = [dataPath + simu+'.1.'+seg+'.OUT.{:03d}.nc'.format(i) for i in [600]]#range(1,961,60)]
+elif simu== 'CTRI2':
+    seg = 'M100m' ; lFiles = [dataPath + simu+'.1.'+seg+'.OUT.{:03d}.nc'.format(i) for i in [40,140,240,340]]#range(1,961,60)]
+elif simu== 'CFLAT':
+    seg = 'S100m' ; lFiles = [dataPath + simu+'.1.'+seg+'.OUT.{:03d}.nc'.format(i) for i in range(1,872,60)]
+elif simu== 'CMO10':
+    seg = 'M100m' ; lFiles = [dataPath + simu+'.1.'+seg+'.OUT.{:03d}.nc'.format(i) for i in range(2,3,1)]
     
 if not os.path.exists(savePath): os.makedirs(savePath) ; print('Directory created !')
 f0 = xr.open_dataset(lFiles[0])
@@ -112,7 +131,7 @@ nt,nz,nx,ny = len(lFiles),len(z),len(x),len(y)
 
 Zm = np.array(f0.level)[nz1:]
 if orog:
-    ZS = xr.open_dataset(dataPath+simu+'_init_R'+str(round(dx*1000))+'m_pgd.nc')['ZS'][ny1:ny2,nx1:nx2].data
+    ZS = xr.open_dataset(dataPath+simu+'_init_M'+str(round(dx*1000))+'m_pgd.nc')['ZS'][ny1:ny2,nx1:nx2].data
     # z = np.arange(dx/2,f0.level[nz2]/1000,dx)
 else:
     ZS = np.zeros((ny,nx))
@@ -419,8 +438,6 @@ def get_hexagonal_flat_precip(x,y,flat_X,flat_Y,precip):
     return flat_precip
 
 #%%
-
-
 class Player(FuncAnimation):
     def __init__(self,  pv,var_init=0, frames=None, init_func=None, fargs=None,save_count=None,
                  clouds_levels=[1e-3],clouds_color='k',clouds_lw=1.,clouds_alpha=0.7,
