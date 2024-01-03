@@ -15,8 +15,8 @@ import locale
 locale.setlocale(locale.LC_ALL,'en_US.utf8')
 
 # simu = 'A0W0V'
-# simu = 'ATRI2'
-simu = 'ACON2'
+simu = 'ATRI2'
+# simu = 'ACON2'
 seg = 'S200m'
 # seg = '1D164'
 zmax = 16 # km
@@ -30,8 +30,8 @@ zmax = 16 # km
 # model = 'LMDZ_1D'
 model = 'LES'
 
-cbtype = 'asinh'
-# cbtype = 'lin'
+# cbtype = 'asinh'
+cbtype = 'lin'
 
 userPath = '/home/philippotn'
 # userPath = '/cnrm/tropics/user/philippotn'
@@ -181,8 +181,8 @@ plot_hori_mean(var=rtracer,cbs=['YlGn','log','both',1e-12,1e2],contour=clfr_cont
 plt.close("all")
 
 #%%
-plt.figure(figsize=(17,10),constrained_layout=True)
-plt.plot(time,precip,color='b')
+plt.figure(11,figsize=(17,10),constrained_layout=True)
+plt.plot(time,precip,color='b',label="Precipitations")
 hours = matplotlib.dates.HourLocator()
 ax = plt.gca()
 ax.xaxis.set_major_locator(hours)
@@ -193,3 +193,28 @@ plt.yticks(fontsize=ft)
 plt.ylabel('Precipitations (mm/h)',fontsize=ft)
 plt.xlabel('Time UTC (hours)',fontsize=ft)
 plt.savefig(savePath+'precip_'+model+'_'+simu+'.png')
+
+#%%
+if model=='LES' and ZS is not None:
+    for region in ['MO','PL']:
+        theta = f['TH_'+region]
+        rvap = f['RV_'+region]
+        cloud_frac = f['CF_'+region]
+        pressure = f['P_'+region]
+        temp = theta * (pressure/100000)**(2/7)
+        rtracer = f['TR_'+region]
+        precip = f['PR_'+region]
+        
+        delta_theta = trend(theta) *3600
+        delta_rvap = trend(rvap) *3600*1000
+        
+        plot_hori_mean(var=delta_theta,cbs=cbs_delta_theta,contour=theta_contour,var_contour=theta,contour_fmt = '%d',contour_label_step=5,
+                saveName='trend_theta_'+model+'_'+simu+'_'+region+'.png',varUnit='K/h',mathTitle='$ \overline{ \\frac{\\partial \\theta}{\\partial t}}$ and $ \overline{\\theta}$ isolines')#,textTitle='Moyenne horizontale de la tendance en température potentielle' )
+
+        plot_hori_mean(var=delta_rvap,cbs=cbs_delta_rvap,contour=clfr_contour,var_contour=cloud_frac,contour_fmt = '%.0f%%',
+                saveName='tend_rv_'+model+'_'+simu+'_'+region+'.png',varUnit='g/kg/h',mathTitle='$ \overline{ \\frac{\\partial r_v}{\\partial t}}$ and cloud fraction isolines')#,textTitle="Moyenne horizontale de la tendance en vapeur d'eau" )
+
+        plot_hori_mean(var=rtracer,cbs=['YlGn','log','both',1e-12,1e2],contour=clfr_contour,var_contour=cloud_frac,contour_fmt = '%.0f%%',
+                        saveName='mean_tr_'+model+'_'+simu+'_'+region+'.png',varUnit='g/kg',mathTitle='$ \overline{ Tracer }$ and cloud fraction isolines')#,textTitle="Moyenne horizontale des traceurs" )
+
+plt.close("all")

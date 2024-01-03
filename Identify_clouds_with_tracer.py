@@ -13,7 +13,8 @@ import xarray as xr
 
 # - Data LES
 # simu = 'AMOPL'
-simu = 'ATRI2'
+# simu = 'ATRI2'
+simu = 'AMO20'
 
 userPath = '/cnrm/tropics/user/philippotn'
 # userPath = '/home/philippotn'
@@ -88,7 +89,15 @@ def coreMask(dictVars) :
     rho = P/287.04/ (thv * (P/100000)**(2/7))
     return -tracer , core_local_minimum_of_tracer_or_cloud_base(z,rcloud[0],thv[0],rho[0],tracer[0])
 
-
+# def thermalMask(dictVars):
+#     TR = dictVars['SVT001']
+#     W = dictVars['WT']
+#     TR_std = np.std(TR,axis=(1,2))
+#     TR_mean = np.mean(TR,axis=(1,2))
+#     TR_stdmin = 0.05/(z+dz/2) * np.cumsum(dz*TR_std)
+#     TR_threshold = TR_mean+np.maximum(TR_std,TR_stdmin)
+#     return np.logical_and( TR>TR_threshold , W>0. )
+    
 for f in lFiles[:]:
     print("\n "+f)
     objects, tmp = identify(f, listVarNames, cloudMask, funcWatershed=coreMask, name="tracer_clouds",overwrite=True,delete=0,deleteCores=0)
