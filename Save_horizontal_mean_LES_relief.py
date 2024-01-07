@@ -14,20 +14,22 @@ from numba import njit,prange
 import os
 import warnings
 import sys
+import sparse
+
 warnings.filterwarnings('ignore')
 floatype = np.float32
 intype = np.int32
 
 # simu = 'AMOPL'
-simu = 'A0W0V'
-# simu = 'ATRI2'
+# simu = 'A0W0V'
+simu = 'ATRI2'
 # simu = 'ACON2'
 # simu = 'AMO20'
 # simu = 'CTRI2'
 # simu = 'CFLAT'
 # simu = 'CMO10'
 
-orog = False
+orog = True
 
 # userPath = '/cnrm/tropics/user/philippotn'
 userPath = '/home/philippotn'
@@ -37,12 +39,14 @@ if userPath == '/home/philippotn':
     savePathVideo = userPath+'/Images/LES_'+simu+'/figures_maps/'
     sys.path.append(userPath+'/Documents/objects/src/')
     savePathObjects = userPath+'/Documents/objects/LES_'+simu+'/1M_thermals/'
+    savePathSkyView = userPath+'/Documents/SkyView/data_sparse/'
+    
 else:
     dataPath = userPath+'/LES_'+simu+'/NO_SAVE/'
     savePathVideo = userPath+'/LES_'+simu+'/figures_maps/'
     sys.path.append(userPath+'/Code_LES/objects-master/src/')
     savePathObjects = userPath+'/LES_'+simu+'/characs_objects/1M_thermals/'
-
+    savePathSkyView = userPath+'/SkyView/data_sparse/'
 savePathMean = dataPath
 
 
@@ -79,6 +83,11 @@ dz = np.append(dz,dz[-1])
 
 Zm = np.array(f0.level)[nz1:]
 
+if simu[0]=='A':
+    z_max_skyview = 16001
+if simu[0]=='C':
+    z_max_skyview = 4001
+    
 dx = x[1]-x[0]
 nt,nz,ny,nx = len(lFiles),len(z),len(y),len(x)
 
@@ -105,6 +114,8 @@ Z = np.copy(z)
 # ax.set_xlabel("x (km)")
 # ax.set_ylabel("y")
 #%%
+
+    
 from identification_methods import identify
 
 @njit(parallel=True)
@@ -304,6 +315,53 @@ def get_flat_precip(x,y,flat_X,flat_Y,precip):
         flat_precip[i] = precip[iy,ix]
     return flat_precip
 
+def emptyness(arrayCOO,end='\n'):
+    print('Volume = {:02%}'.format(arrayCOO.nnz/arrayCOO.size),end=end)
+    
+def make_sparses_skyview(rcloud,rprecip,w,thetav,savePath):
+    if not os.path.exists(savePath): os.makedirs(savePath) ; print('Directory created !')
+
+    dtype = np.float32
+    idx_dtype = np.int32
+
+    new_z = np.arange(0.,z_max_skyview,dx,dtype=dtype)
+    end = '--- '
+    
+    print("Interpolation",end=end)
+    new_rcloud = interp_on_altitude_levels(rcloud,new_z,Zm,ZS)
+    new_rprecip = interp_on_altitude_levels(rprecip,new_z,Zm,ZS)
+    # new_rtracer = interp_on_altitude_levels(rtracer,new_z,Zm,ZS)
+    new_w =interp_on_altitude_levels(w[1:],new_z,Zm[1:]/2+Zm[:-1]/2,ZS)
+    new_thva = interp_on_altitude_levels( thetav,new_z,Zm,ZS)
+    new_thva -= np.nanmean(new_thva,axis=(1,2),keepdims=True)
+    
+    print("Threshold",end=end)
+    new_rcloud[new_rcloud < 1e-6 ] = np.nan
+    new_rprecip[new_rprecip < 1e-4 ] = np.nan
+    new_w[np.abs(new_w) < 2.] = np.nan
+    new_thva[20:,:,:] = np.nan # 11 for BOMEX # 14 for AMMA # 8 for LBA # 20 for AMOPL
+    new_thva[new_thva > -1] = np.nan
+    
+    print("Sparse",end=end)
+    new_rcloud_sparse = sparse.COO.from_numpy(new_rcloud.reshape((1,)+new_rcloud.shape),idx_dtype=idx_dtype,fill_value=np.nan)
+    new_rprecip_sparse = sparse.COO.from_numpy(new_rprecip.reshape((1,)+new_rprecip.shape),idx_dtype=idx_dtype,fill_value=np.nan)
+    # new_rtracer_sparse = sparse.COO.from_numpy(new_rtracer.reshape((1,)+new_rtracer.shape),idx_dtype=idx_dtype,fill_value=np.nan)
+    new_w_sparse = sparse.COO.from_numpy(new_w.reshape((1,)+new_w.shape),idx_dtype=idx_dtype,fill_value=np.nan)
+    new_thva_sparse = sparse.COO.from_numpy(new_thva.reshape((1,)+new_thva.shape),idx_dtype=idx_dtype,fill_value=np.nan)
+    
+    sparse.save_npz(savePath+'rcloud_sparse_'+simu+'_'+str(it) ,new_rcloud_sparse)  
+    sparse.save_npz(savePath+'rprecip_sparse_'+simu+'_'+str(it) ,new_rprecip_sparse)
+    # sparse.save_npz(savePath+'rtracer_sparse_'+simu+'_'+str(it) ,new_rtracer_sparse)
+    sparse.save_npz(savePath+'w_sparse_'+simu+'_'+str(it) ,new_w_sparse)
+    sparse.save_npz(savePath+'thva_sparse_'+simu+'_'+str(it) ,new_thva_sparse)
+
+    print("Done",end=end)
+    emptyness(new_rcloud_sparse,end=end)
+    emptyness(new_rprecip_sparse,end=end)
+    # emptyness(new_rtracer_sparse,end=end)
+    emptyness(new_w_sparse,end=end)
+    emptyness(new_thva_sparse)
+    
 #%%
 k = 2*np.pi*np.fft.fftfreq(nx,dx)
 m = 2*np.pi*np.fft.fftfreq(ny,dx)
@@ -462,17 +520,18 @@ def plot_Nmaps(ZS,U,V,THVAS,BLH,PRS,cloud_base_mask,WBL,UBLH,VBLH,name,legend=Fa
     print(' ---- Saved {:02d}h{:02d}'.format(int(f.time.dt.hour),int(f.time.dt.minute)))
     
 #%%
+nvarT = 3
 nvar = 9
 nflux = 4
 # timeH = np.zeros(nt)
 data_mean = np.full((nvar,nt,nz),np.nan,dtype=floatype)
-precip_mean = np.zeros(nt,dtype=floatype)
+dataT_mean = np.zeros((nvarT,nt),dtype=floatype)
 if orog:
     data_flux_MO = np.full((nflux,nt,nz),np.nan,dtype=floatype)
     data_mean_MO = np.full((nvar,nt,nz),np.nan,dtype=floatype)
     data_mean_PL = np.full((nvar,nt,nz),np.nan,dtype=floatype)
-    precip_mean_MO = np.zeros(nt,dtype=floatype)
-    precip_mean_PL = np.zeros(nt,dtype=floatype)
+    dataT_mean_MO = np.zeros((nvarT,nt),dtype=floatype)
+    dataT_mean_PL = np.zeros((nvarT,nt),dtype=floatype)
 
 times = f0.time.data
 it0 = 1
@@ -541,6 +600,9 @@ for it,fname in enumerate(lFiles):
     np.savez_compressed(savePathObjects+'objects_charac_area_pos.{:03d}'.format(it+it0),objects=objects,charac=charac,area=area,pos=pos)
     print(' Save charac:',str(round(time.time()-time0,1))+' s',end=' ') ; time0 = time.time()
     
+    make_sparses_skyview(RC,RP,W,THV,savePathSkyView)
+    print(' SkyView sparses:',str(round(time.time()-time0,1))+' s',end=' ') ; time0 = time.time()
+    
     if orog:
         TH_ = interp_on_altitude_levels( TH,Z,Zm,ZS)
         RV_ = interp_on_altitude_levels(RV,Z,Zm,ZS)
@@ -555,7 +617,9 @@ for it,fname in enumerate(lFiles):
         TH_=TH ; RV_=RV ; THV_=THV ; RC_=RC ; P_=P ; TR_=TR ; W_=W ; U_=U ; V_=V
     print('Interpolations on altitude levels :',str(round(time.time()-time0,1))+' s',end=' ') ; time0 = time.time()
     
-    precip_mean[it] = np.mean(PRS)
+    dataT_mean[0,it] = np.mean(PRS)
+    dataT_mean[1,it] = np.mean(BLH)
+    dataT_mean[2,it] = np.mean(THVBL)
     data_mean[0,it] = np.nanmean(TH_,axis=(1,2)) # K
     data_mean[1,it] = np.nanmean(RV_,axis=(1,2)) # g/kg
     data_mean[2,it] = np.nanmean(THV_,axis=(1,2)) # K
@@ -569,7 +633,9 @@ for it,fname in enumerate(lFiles):
     if orog:
         data_flux_MO[:,it,:] = MO_flux(MO,U,V,RHO,RV,RT,TH)
         
-        precip_mean_MO[it] = np.mean(PRS[MO])
+        dataT_mean_MO[0,it] = np.mean(PRS[MO])
+        dataT_mean_MO[1,it] = np.mean(BLH[MO])
+        dataT_mean_MO[2,it] = np.mean(THVBL[MO])
         data_mean_MO[0,it] = np.nanmean(TH_[:,MO],axis=1) # K
         data_mean_MO[1,it] = np.nanmean(RV_[:,MO],axis=1) # g/kg
         data_mean_MO[2,it] = np.nanmean(THV_[:,MO],axis=1) # K
@@ -580,7 +646,9 @@ for it,fname in enumerate(lFiles):
         data_mean_MO[7,it] = np.nanmean(U_[:,MO],axis=1) # m/s
         data_mean_MO[8,it] = np.nanmean(V_[:,MO],axis=1) # m/s
         
-        precip_mean_PL[it] = np.mean(PRS[PL])
+        dataT_mean_PL[0,it] = np.mean(PRS[PL])
+        dataT_mean_PL[1,it] = np.mean(BLH[PL])
+        dataT_mean_PL[2,it] = np.mean(THVBL[PL])
         data_mean_PL[0,it] = np.nanmean(TH_[:,PL],axis=1) # K
         data_mean_PL[1,it] = np.nanmean(RV_[:,PL],axis=1) # g/kg
         data_mean_PL[2,it] = np.nanmean(THV_[:,PL],axis=1) # K
@@ -618,7 +686,9 @@ if orog:
         "W": (("time", "z"), data_mean[6]),
         "U": (("time", "z"), data_mean[7]),
         "V": (("time", "z"), data_mean[8]),
-        "PR": (("time",),precip_mean),
+        "PR": (("time",),dataT_mean[0]),
+        "BLH": (("time",),dataT_mean[1]),
+        "THVBL": (("time",),dataT_mean[2]),
         
         "MO": (("y", "x"), MO),
         "TH_MO": (("time", "z"), data_mean_MO[0]),
@@ -630,7 +700,9 @@ if orog:
         "W_MO": (("time", "z"), data_mean_MO[6]),
         "U_MO": (("time", "z"), data_mean_MO[7]),
         "V_MO": (("time", "z"), data_mean_MO[8]),
-        "PR_MO": (("time",),precip_mean_MO),
+        "PR_MO": (("time",),dataT_mean_MO[0]),
+        "BLH_MO": (("time",),dataT_mean_MO[1]),
+        "THVBL_MO": (("time",),dataT_mean_MO[2]),
         
         "PL": (("y", "x"), PL),
         "TH_PL": (("time", "z"), data_mean_PL[0]),
@@ -642,7 +714,14 @@ if orog:
         "W_PL": (("time", "z"), data_mean_PL[6]),
         "U_PL": (("time", "z"), data_mean_PL[7]),
         "V_PL": (("time", "z"), data_mean_PL[8]),
-        "PR_PL": (("time",),precip_mean_PL)
+        "PR_PL": (("time",),dataT_mean_PL[0]),
+        "BLH_PL": (("time",),dataT_mean_PL[1]),
+        "THVBL_PL": (("time",),dataT_mean_PL[2]),
+        
+        "MO_flux_RHO": (("time", "z"), data_flux_MO[0]),
+        "MO_flux_RV": (("time", "z"), data_flux_MO[1]),
+        "MO_flux_RT": (("time", "z"), data_flux_MO[2]),
+        "MO_flux_TH": (("time", "z"), data_flux_MO[3])
         },
         coords={"time": times,
             "z": Z,
@@ -662,7 +741,9 @@ else:
         "W": (("time", "z"), data_mean[6]),
         "U": (("time", "z"), data_mean[7]),
         "V": (("time", "z"), data_mean[8]),
-        "PR": (("time",),precip_mean)
+        "PR": (("time",),dataT_mean[0]),
+        "BLH": (("time",),dataT_mean[1]),
+        "THVBL": (("time",),dataT_mean[2])
         },
         coords={"time": times,
             "z": Z,
@@ -686,6 +767,17 @@ from moviepy.editor import ImageSequenceClip
 concat_clip = ImageSequenceClip(img,  fps=10)
 concat_clip.write_videofile(savePathVideo+'video_3maps_'+simu+'.mp4')
 
+#%%
+for var in ['rcloud','rprecip','w','thva']:#,'rtracer'
+    var_sparses = [ sparse.load_npz(savePathSkyView+var+'_sparse_'+simu+'_'+str(it)+'.npz' ) for it in range(nt) ]
+    var_sparse = sparse.concatenate( var_sparses ,axis=0)
+    sparse.save_npz(savePathSkyView+var+'_sparse_'+simu ,var_sparse)  
+    print(var,end=' ')
+    emptyness(var_sparse)
+    
+    for it in range(nt):
+        os.remove(savePathSkyView+var+'_sparse_'+simu+'_'+str(it)+'.npz' )
+    
 #%%
 # import matplotlib.pyplot as plt
 # fig,axs = plt.subplots(ncols=5)
