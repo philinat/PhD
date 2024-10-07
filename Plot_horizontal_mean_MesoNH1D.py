@@ -13,13 +13,23 @@ import matplotlib
 import os
 import locale
 locale.setlocale(locale.LC_ALL,'en_US.utf8')
-
+Wcm = matplotlib.colors.LinearSegmentedColormap.from_list('seismic2',[(0,(0.2,0.,0.3)),(0.25,(0,0,1)),(0.28,(0,0.2,1)),(0.45,(0,0.9,1)),(0.5,(1,1,1)),(0.55,(1,0.9,0)),(0.73,(1,0.2,0)),(0.75,(1,0,0)),(1,(0.3,0.,0.2))])
+ 
 # simu = 'A0W0V'
-simu = 'ATRI2'
+# simu = 'ATRI2'
+# simu = 'AMOPL'
 # simu = 'ACON2'
-seg = 'S200m'
+# simu='HUM25'
+
+# simu = 'DFLAT'
+# simu = 'DF500'
+# simu = 'DMO10'
+# simu = 'DTRI2'
+simu = 'DMOPL'
+seg = 'M100m'
 # seg = '1D164'
-zmax = 16 # km
+# seg = '1D292'
+zmax = 5 # km
 
 # simu = 'CFLAT'
 # simu = 'CTRI2'
@@ -68,11 +78,12 @@ if model=='MesoNH_1D':
     temp = theta * (pressure/100000)**(2/7)
     ZS = None
     rtracer = npf('SVT001')
-    precip = np.array(f.ACPRRSTEP[:])
+    # precip = np.array(f.ACPRRSTEP[:])
     
 if model=='LES':
     if userPath == '/home/philippotn':
-        dataPath = userPath+'/Documents/SIMU_LES/'
+        dataPath = userPath+'/Documents/NO_SAVE/'
+        # dataPath = userPath+'/Documents/SIMU_LES/'
         savePath = userPath+'/Images/LES_'+simu+'/Plot_horizontal_mean/'
     else:
         dataPath = userPath+'/LES_'+simu+'/NO_SAVE/'
@@ -80,7 +91,7 @@ if model=='LES':
         
     f = xr.open_dataset(dataPath+simu+'_'+seg+'_mean.nc')
     ZS = f['ZS']
-    if np.all(ZS==0.): ZS=None
+    if np.all(ZS==ZS[0,0]): ZS=None
     z = f['z']/1000
     theta = f['TH']
     rvap = f['RV']
@@ -88,8 +99,10 @@ if model=='LES':
     pressure = f['P']
     temp = theta * (pressure/100000)**(2/7)
     rtracer = f['TR']
-    precip = f['PR']
-
+    # precip = f['PRS']
+    tke = f['TKE']
+    thetaflux = f['WTH']
+    
 time = f['time']
 dt = float(time[1]-time[0])/1e9 # from ns to s
     
@@ -157,64 +170,84 @@ def plot_hori_mean(var, saveName, cbs=['Greys','lin','both',-1.,1.], varUnit='',
     # plt.savefig(savePath+'dt10_'+saveName)
     plt.show()
 
+theta_ = np.copy(theta)
 THmin = np.min(theta) ; THmax = np.max(theta[:,z<zmax])
+if simu[0]=='D': THmin = 300.
 theta_contour = np.arange(int(THmin),int(THmax),1)
 clfr_contour = np.array([0.,0.01,0.1,1.])
-plot_hori_mean(var=theta,cbs=['rainbow','lin','both',THmin,THmax],contour=theta_contour,var_contour=theta,iso=False,
-                saveName='theta_'+model+'_'+simu+'.png',varUnit='K',mathTitle = '$ \overline{ \\theta}$',textTitle='Moyenne horizontale de la température potentielle')
 
 if cbtype == 'lin': 
     cbs_delta_theta=['RdBu_r',cbtype,'both',-2,2]
-    cbs_delta_rvap=['BrBG',cbtype,'both',-4,4]
+    cbs_delta_rvap=['BrBG',cbtype,'both',-2,2]
 elif cbtype == 'asinh':
     cbs_delta_theta=['RdBu_r',cbtype,'both',-10,10,0.02]
     cbs_delta_rvap=['BrBG',cbtype,'both',-10,10,0.02]
-plot_hori_mean(var=delta_theta,cbs=cbs_delta_theta,contour=theta_contour,var_contour=theta,contour_fmt = '%d',contour_label_step=5,
-                saveName='trend_theta_'+model+'_'+simu+'.png',varUnit='K/h',mathTitle='$ \overline{ \\frac{\\partial \\theta}{\\partial t}}$ and $ \overline{\\theta}$ isolines')#,textTitle='Moyenne horizontale de la tendance en température potentielle' )
+    
+def plot_basics(region):
+    plot_hori_mean(var=theta,cbs=['turbo','lin','both',THmin,THmax],contour=theta_contour,var_contour=theta_,iso=False,
+                saveName='theta_'+model+'_'+simu+region+'.png',varUnit='K',mathTitle = '$ \overline{ \\theta}^{'+region+'}$ and $\overline{\\theta}$ isolines')#,textTitle='Moyenne horizontale de la température potentielle')
 
-plot_hori_mean(var=delta_rvap,cbs=cbs_delta_rvap,contour=clfr_contour,var_contour=cloud_frac,contour_fmt = '%.0f%%',
-                saveName='tend_rv_'+model+'_'+simu+'.png',varUnit='g/kg/h',mathTitle='$ \overline{ \\frac{\\partial r_v}{\\partial t}}$ and cloud fraction isolines')#,textTitle="Moyenne horizontale de la tendance en vapeur d'eau" )
+    plot_hori_mean(var=delta_theta,cbs=cbs_delta_theta,contour=theta_contour,var_contour=theta_,contour_fmt = '%d',contour_label_step=5,
+                    saveName='trend_theta_'+model+'_'+simu+region+'.png',varUnit='K/h',mathTitle='$ \overline{ \\frac{\\partial \\theta}{\\partial t}}^{'+region+'}$ and $\overline{\\theta}$ isolines')#,textTitle='Moyenne horizontale de la tendance en température potentielle' )
+    
+    # plot_hori_mean(var=delta_rvap,cbs=cbs_delta_rvap,contour=clfr_contour,var_contour=cloud_frac,contour_fmt = '%.0f%%', ### cloud fraction isolines
+    plot_hori_mean(var=delta_rvap,cbs=cbs_delta_rvap,contour=theta_contour,var_contour=theta_,contour_fmt = '%d',contour_label_step=5,
+                    saveName='tend_rv_'+model+'_'+simu+region+'.png',varUnit='g/kg/h',mathTitle='$ \overline{ \\frac{\\partial r_v}{\\partial t}}^{'+region+'}$ and $\overline{\\theta}$ isolines')#,textTitle="Moyenne horizontale de la tendance en vapeur d'eau" )
+    
+    plot_hori_mean(var=rtracer,cbs=['YlGn','log','both',1e-3,1e2],contour=theta_contour,var_contour=theta_,contour_fmt = '%d',contour_label_step=5,
+                    saveName='mean_tr_'+model+'_'+simu+region+'.png',varUnit='g/kg',mathTitle='$ \overline{ tracer }^{'+region+'}$ and $\overline{\\theta}$ isolines')#,textTitle="Moyenne horizontale des traceurs" )
+    
+    plot_hori_mean(var=tke,cbs=['magma_r','log','both',1e-3,1e1],contour=theta_contour,var_contour=theta_,contour_fmt = '%d',contour_label_step=5,
+                    saveName='mean_tke_'+model+'_'+simu+region+'.png',varUnit='$m^2 / s^2$',mathTitle='$ \overline{ tke }^{'+region+'}$ and $\overline{\\theta}$ isolines')
+    
+    plot_hori_mean(var=thetaflux,cbs=['PiYG','lin','both',-0.3,0.3],contour=theta_contour,var_contour=theta_,contour_fmt = '%d',contour_label_step=5,
+                    saveName='mean_wth_'+model+'_'+simu+region+'.png',varUnit='K·m/s',mathTitle='$ \overline{ w·\\theta ^{\prime} }^{'+region+'}$ and $\overline{\\theta}$ isolines')
+    plt.close("all")
 
-plot_hori_mean(var=rtracer,cbs=['YlGn','log','both',1e-12,1e2],contour=clfr_contour,var_contour=cloud_frac,contour_fmt = '%.0f%%',
-                saveName='mean_tr_'+model+'_'+simu+'.png',varUnit='g/kg',mathTitle='$ \overline{ Tracer }$ and cloud fraction isolines')#,textTitle="Moyenne horizontale des traceurs" )
-
-plt.close("all")
+plot_basics('')
 
 #%%
-plt.figure(11,figsize=(17,10),constrained_layout=True)
-plt.plot(time,precip,color='b',label="Precipitations")
-hours = matplotlib.dates.HourLocator()
-ax = plt.gca()
-ax.xaxis.set_major_locator(hours)
-ax.xaxis.set_major_formatter(matplotlib.dates.ConciseDateFormatter(hours,formats=['%Y', '%b', '%b/%d', '%H', '%H:%M', '%S.%f']))
-ft = 20
-plt.xticks(fontsize=ft)
-plt.yticks(fontsize=ft)
-plt.ylabel('Precipitations (mm/h)',fontsize=ft)
-plt.xlabel('Time UTC (hours)',fontsize=ft)
-plt.savefig(savePath+'precip_'+model+'_'+simu+'.png')
-
-#%%
-if model=='LES' and ZS is not None:
-    for region in ['MO','PL']:
-        theta = f['TH_'+region]
-        rvap = f['RV_'+region]
+def plot_regions(region):
+    plot_hori_mean(var=alpha,cbs=['RdPu','lin','max',0,np.max(alpha)],contour=theta_contour,var_contour=theta_,contour_fmt = '%d',contour_label_step=5,
+                    saveName='alpha_'+model+'_'+simu+region+'.png',varUnit='',mathTitle='$ \\alpha ^{'+region+'}$ and $\overline{\\theta}$ isolines')
+    plot_hori_mean(var=w,cbs=[Wcm,'lin','both',-3,3],contour=theta_contour,var_contour=theta_,contour_fmt = '%d',contour_label_step=5,
+                    saveName='w_'+model+'_'+simu+region+'.png',varUnit='m/s',mathTitle='$ \overline{ w }^{'+region+'}$ and $\overline{\\theta}$ isolines')
+    plt.close("all")
+    
+if model=='LES':
+    regions = ["e","t","s",'MO','PL'] if ZS is not None else ["e","t","s"]
+    for region in regions:
+        theta = f['TH_'+region] ; delta_theta = trend(theta) *3600
+        rvap = f['RV_'+region] ; delta_rvap = trend(rvap) *3600*1000
         cloud_frac = f['CF_'+region]
         pressure = f['P_'+region]
         temp = theta * (pressure/100000)**(2/7)
         rtracer = f['TR_'+region]
-        precip = f['PR_'+region]
+        # precip = f['PRS_'+region]
+        tke = f['TKE_'+region]
+        thetaflux = f['WTH_'+region]
+        plot_basics('_'+region)
         
-        delta_theta = trend(theta) *3600
-        delta_rvap = trend(rvap) *3600*1000
-        
-        plot_hori_mean(var=delta_theta,cbs=cbs_delta_theta,contour=theta_contour,var_contour=theta,contour_fmt = '%d',contour_label_step=5,
-                saveName='trend_theta_'+model+'_'+simu+'_'+region+'.png',varUnit='K/h',mathTitle='$ \overline{ \\frac{\\partial \\theta}{\\partial t}}$ and $ \overline{\\theta}$ isolines')#,textTitle='Moyenne horizontale de la tendance en température potentielle' )
-
-        plot_hori_mean(var=delta_rvap,cbs=cbs_delta_rvap,contour=clfr_contour,var_contour=cloud_frac,contour_fmt = '%.0f%%',
-                saveName='tend_rv_'+model+'_'+simu+'_'+region+'.png',varUnit='g/kg/h',mathTitle='$ \overline{ \\frac{\\partial r_v}{\\partial t}}$ and cloud fraction isolines')#,textTitle="Moyenne horizontale de la tendance en vapeur d'eau" )
-
-        plot_hori_mean(var=rtracer,cbs=['YlGn','log','both',1e-12,1e2],contour=clfr_contour,var_contour=cloud_frac,contour_fmt = '%.0f%%',
-                        saveName='mean_tr_'+model+'_'+simu+'_'+region+'.png',varUnit='g/kg',mathTitle='$ \overline{ Tracer }$ and cloud fraction isolines')#,textTitle="Moyenne horizontale des traceurs" )
+        alpha = f['ALPHA_'+region]
+        w = f['W_'+region]
+        plot_regions('_'+region)
+#%%
+if model=='LES' and ZS is not None:
+    cbs_massflux=['RdBu_r',cbtype,'both',-5000,5000]
+    cbs_dpressure=['RdBu_r',cbtype,'both',-2,2]
+    
+    massflux_contour = np.array([0.,0.01,0.1,1.])
+    massflux = f['MO_flux_RHO']
+    delta_MO_PL_thetav = f['THV_MO'] - f['THV_PL']
+    delta_MO_PL_pressure = (f['P_MO'] - f['P_PL']) / 100 # hPa
+    
+    plot_hori_mean(var=delta_MO_PL_thetav ,cbs=cbs_delta_theta, 
+                saveName='dthetav_MO_PL_'+model+'_'+simu+'.png',varUnit='K',mathTitle='$ \overline{  \\theta}_v^{MO} - \overline{  \\theta}_v^{PL}$')#,textTitle='Moyenne horizontale de la tendance en température potentielle' )
+    
+    plot_hori_mean(var=delta_MO_PL_pressure ,cbs=cbs_dpressure, 
+                saveName='dpressure_MO_PL_'+model+'_'+simu+'.png',varUnit='K',mathTitle='$ \overline{ p}^{MO} - \overline{p}^{PL}$')#,textTitle='Moyenne horizontale de la tendance en température potentielle' )
+    
+    plot_hori_mean(var=massflux ,cbs=cbs_massflux, 
+                saveName='massflux_MO_PL_'+model+'_'+simu+'.png',varUnit='kg/s',mathTitle='Massflux PL--> MO')#,textTitle='Moyenne horizontale de la tendance en température potentielle' )
 
 plt.close("all")

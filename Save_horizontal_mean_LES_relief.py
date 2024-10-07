@@ -10,45 +10,80 @@ import time
 import numpy as np
 import xarray as xr
 import matplotlib.pyplot as plt
+import matplotlib
+# import matplotlib.colors as mcolors
+ZScm = matplotlib.colors.LinearSegmentedColormap.from_list("", ["green","yellow","saddlebrown","grey","w"])
+Wcm = matplotlib.colors.LinearSegmentedColormap.from_list('seismic2',[(0,(0.2,0.,0.3)),(0.25,(0,0,1)),(0.28,(0,0.2,1)),(0.45,(0,0.9,1)),(0.5,(1,1,1)),(0.55,(1,0.9,0)),(0.73,(1,0.2,0)),(0.75,(1,0,0)),(1,(0.3,0.,0.2))])
+    
 from numba import njit,prange
 import os
 import warnings
 import sys
 import sparse
 
+
+from Module_LES_objects import change_label, charac_opti_3D
+from Module_LES import Md,Mv,Rd,Cp,Lv,g,p0
+from Module_LES import RH_water_ice, dewpoint
+from Module_LES import AL_lin_interp, AL_objects, AGL_lin_interp, AGL_lin_anomaly, boundary_layer_diags, surface_layer_diags, horizontal_convergence , MO_flux, AL_SL
+
 warnings.filterwarnings('ignore')
-floatype = np.float32
+floatype = np.float64
 intype = np.int32
+
+make_charac = False
+make_maps = True ; img_maps_names = ['gif_BLH','gif_WBL','gif_THVA2m'] # img_maps_names = ['video_3maps_BL','video_3maps_SL']
+make_hist2D = False
+make_sparses = False
+make_hori_mean = False
+use_thermals = False
+
+orog = True
+dates = False
 
 # simu = 'AMOPL'
 # simu = 'A0W0V'
-simu = 'ATRI2'
+# simu = 'ATRI2'
 # simu = 'ACON2'
 # simu = 'AMO20'
 # simu = 'CTRI2'
 # simu = 'CFLAT'
 # simu = 'CMO10'
 
-orog = True
+# simu = 'E600M'
+# simu = 'E620M'
+
+# simu = 'DFLAT'
+# simu = 'DF500'
+# simu = 'DMO10'
+# simu = 'DTRI2'
+simu = 'DMOPL'
+
+
+
+
 
 # userPath = '/cnrm/tropics/user/philippotn'
 userPath = '/home/philippotn'
     
 if userPath == '/home/philippotn':
-    dataPath = userPath+'/Documents/SIMU_LES/'
-    savePathVideo = userPath+'/Images/LES_'+simu+'/figures_maps/'
+    if simu[0] in ['A','C']: dataPath = userPath+'/Documents/SIMU_LES/'
+    elif simu[0] in ['D']: dataPath = userPath+'/Documents/NO_SAVE/'
+    elif simu[0] in ['E']: dataPath = userPath+'/Documents/Canicule_Août_2023/'+simu+'/'
+    # dataPath = userPath+'/Documents/SIMU_LES/'
+    savePathFigures = userPath+'/Images/LES_'+simu+'/'
     sys.path.append(userPath+'/Documents/objects/src/')
     savePathObjects = userPath+'/Documents/objects/LES_'+simu+'/1M_thermals/'
     savePathSkyView = userPath+'/Documents/SkyView/data_sparse/'
     
 else:
     dataPath = userPath+'/LES_'+simu+'/NO_SAVE/'
-    savePathVideo = userPath+'/LES_'+simu+'/figures_maps/'
+    savePathFigures = userPath+'/LES_'+simu+'/figures/'
     sys.path.append(userPath+'/Code_LES/objects-master/src/')
     savePathObjects = userPath+'/LES_'+simu+'/characs_objects/1M_thermals/'
     savePathSkyView = userPath+'/SkyView/data_sparse/'
 savePathMean = dataPath
-
+    
 
 if simu == 'AMOPL':
     seg = 'M200m'# ; lFiles = [dataPath + 'AMOPL.1.200m1.OUT.{:03d}.nc'.format(i) for i in range(1,241,1)] + [dataPath + 'AMOPL.1.200m2.OUT.{:03d}.nc'.format(i) for i in range(1,722,1)]
@@ -68,38 +103,85 @@ elif simu== 'CFLAT':
 elif simu== 'CMO10':
     seg = 'M100m' ; lFiles = [dataPath + simu+'.1.'+seg+'.OUT.{:03d}.nc'.format(i) for i in range(2,3,1)]
 
+elif simu in ['DFLAT','DF500','DTRI2','DMO10','DMOPL']:
+    # seg = 'M100m' ; lFiles = [dataPath + simu+'.1.'+seg+'.OUT.{:04d}.nc'.format(i) for i in range(6,109,6)]
+    seg = 'M100m' ; lFiles = [dataPath + simu+'.1.'+seg+'.OUT.{:04d}.nc'.format(i) for i in range(6,85,6)] # only day
+    
+elif simu=='E600M':
+    # seg = '19AUG'; lFiles = [dataPath + simu+'.1.'+seg+'.OUT.{:04d}.nc'.format(i) for i in range(6,7,1)]
+    seg = '19AU2'; lFiles = [dataPath + simu+'.1.'+seg+'.OUT.{:04d}.nc'.format(i) for i in range(1,38,6)]
+    
+elif simu=='E620M':
+    days = [19,20]
+    hours = [10,14,18]
+    # hours = [0,4,8,12,16,20]
+    tree = 2
+    seg = ['AROME','600m','200m'][tree]
+    lFiles=[]
+    for day in days:
+        if tree==0:
+            lFiles += [dataPath + '{:02d}AUG_{:02d}H.OUT.nc'.format(day,i) for i in hours]
+        else:
+            lFiles += [dataPath + simu+'.'+str(tree)+'.{:02d}AUG.OUT.{:04d}.nc'.format(day,i) for i in hours]
+            
 f0 = xr.open_dataset(lFiles[0],engine='h5netcdf')
-
+var_names = [i for i in f0.data_vars]
+        
 nx1 = 1 ; nx2 = len(f0.ni)-1
 ny1 = 1 ; ny2 = len(f0.nj)-1
-nz1 = 1 ; nz2 = len(f0.level)
+nz1 = 1 ; nz2 = len(f0.level)-1
 
-x = np.array(f0.ni)[nx1:nx2]
-y = np.array(f0.nj)[ny1:ny2]
+x = np.round( np.array(f0.ni)[nx1:nx2] ,decimals=-1)
+y = np.round( np.array(f0.nj)[ny1:ny2] ,decimals=-1)
 z = np.array(f0.level)[nz1:nz2]
 z_ = np.array(f0.level_w)[nz1:nz2]
 dz = z_[1:]-z_[:-1]
 dz = np.append(dz,dz[-1])
 
 Zm = np.array(f0.level)[nz1:]
+ZTOP = (Zm[-1]+Zm[-2])/2
+
 
 if simu[0]=='A':
     z_max_skyview = 16001
-if simu[0]=='C':
+elif simu[0]=='C':
     z_max_skyview = 4001
+elif simu[0]=='D':
+    z_max_skyview = 5001
+elif simu[0]=='E':
+    z_max_skyview = 15001
+else:
+    z_max_skyview = 15001
+    
     
 dx = x[1]-x[0]
 nt,nz,ny,nx = len(lFiles),len(z),len(y),len(x)
 
-if orog:
-    ZS = xr.open_dataset(dataPath+simu+'_init_'+seg+'_pgd.nc')['ZS'][ny1:ny2,nx1:nx2].data
-    ZSmean = np.mean(ZS)
-    MO = ZS>ZSmean # Mountain region (upper one)
-    PL = np.logical_not(MO) # Plain region (lower one)
+
+pgdFile = None
+if simu[0] in ['A','C','D']:
+    pgdFile = dataPath+simu+'_init_'+seg+'_pgd.nc'
+else:
+    pgdFile = dataPath+'PGD_'+simu+'_'+str(round(dx))+'m.nc'
+    # pgdFile = dataPath+'PGD_200m.neste1.nc'
+    
+if pgdFile is not None:
+    ZS = xr.open_dataset(pgdFile)['ZS'][ny1:ny2,nx1:nx2].data
 else:
     ZS = np.zeros((ny,nx))
     
-Z = np.copy(z)
+if orog:
+    ZSmean = np.mean(ZS)
+    MO = ZS>ZSmean # Mountain region (upper one)
+    PL = np.logical_not(MO) # Plain region (lower one)
+    
+# Z = np.copy(z)
+# Z = np.arange(25.,z[-1],50.)
+Z = np.arange(25.,6000,50.)
+nZ = len(Z)
+dZ = 50*np.ones(nZ)
+
+dz_shrink = (ZTOP-ZS) /ZTOP
 
 #%%
 # import matplotlib.pyplot as plt
@@ -114,188 +196,6 @@ Z = np.copy(z)
 # ax.set_xlabel("x (km)")
 # ax.set_ylabel("y")
 #%%
-
-    
-from identification_methods import identify
-
-@njit(parallel=True)
-def charac_opti_3D(objects,variables):
-    # charac = (mean,std,min,max) of 3D objects for each levels, and each given 3D variables
-    # area = area of objects per levels
-    # pos = (x,y,std) mean position of clouds per levels, and its standard deviation 
-    nz,nx,ny = objects.shape
-    nobj = np.max(objects)+1
-    charac = np.zeros((nobj,nz,len(variables),4),dtype=floatype)
-    area = np.zeros((nobj,nz),dtype=intype)
-    pos = np.zeros((nobj,nz,3),dtype=floatype)
-    
-    for h in prange(nz): # prange for parallelization of each levels
-        for i in range(nx):
-            for j in range(ny):
-                obj = objects[h,i,j]
-                area[obj,h] +=1
-                
-                if obj>0: # Compute mean position only for clouds (not for environment)
-                    if area[obj,h]==1: 
-                        pos[obj,h,0] = i
-                        pos[obj,h,1] = j
-                    else:
-                        dx = i-pos[obj,h,0]
-                        if nx-abs(dx)<abs(dx): # Periodic distance
-                            dx = -np.sign(dx)* (nx-abs(dx))
-                        dy = j-pos[obj,h,1]
-                        if ny-abs(dy)<abs(dy):
-                            dy = -np.sign(dy)* (ny-abs(dy))
-                        pos[obj,h,0] = (pos[obj,h,0] + dx/area[obj,h])%nx # Periodic position thank to %
-                        pos[obj,h,1] = (pos[obj,h,1] + dy/area[obj,h])%ny
-                
-                for v,variable in enumerate(variables): # Compute incrementaly (mean,std,min,max)
-                    charac[obj,h,v,0] += variable[h,i,j]
-                    charac[obj,h,v,1] += variable[h,i,j]**2
-                    if charac[obj,h,v,2] > variable[h,i,j] or area[obj,h]==1:
-                        charac[obj,h,v,2] = variable[h,i,j]
-                    if charac[obj,h,v,3] < variable[h,i,j] or area[obj,h]==1:
-                        charac[obj,h,v,3] = variable[h,i,j]
-                        
-    for h in prange(nz):
-        for i in range(nx): # Loop to compute position variance from the previously computed mean position of clouds
-            for j in range(ny):
-                obj = objects[h,i,j]
-                if obj>0:
-                    dx = i-pos[obj,h,0]
-                    if nx-abs(dx)<abs(dx):
-                        dx = -np.sign(dx)* (nx-abs(dx))
-                    dy = j-pos[obj,h,1]
-                    if ny-abs(dy)<abs(dy):
-                        dy = -np.sign(dy)* (ny-abs(dy))
-                    pos[obj,h,2] += dx**2+dy**2
-                        
-    for h in prange(nz): 
-        for obj in range(nobj):
-            if area[obj,h]>0:
-                pos[obj,h,2] = np.sqrt(pos[obj,h,2]/area[obj,h])
-                for v in range(len(variables)):
-                    charac[obj,h,v,0] /= area[obj,h] # Mean
-                    charac[obj,h,v,1] = np.sqrt( charac[obj,h,v,1]/area[obj,h] - charac[obj,h,v,0]**2 ) # Standard deviation as sqrt(E[X^2] - E[X]^2)
-            else:
-                charac[obj,h,:,:] = np.nan # Outside of objects charac and pos are undefined 
-                pos[obj,h,:] = np.nan
-    return charac,area,pos
-
-@njit(parallel=True)
-def change_label(objects):
-    nz,ny,nx = np.shape(objects)
-    unique = np.unique(objects)
-    old2new = np.zeros(unique[-1]+1,dtype=intype)
-    for i,u in enumerate(unique):
-        old2new[u] = i
-        
-    for j in prange(ny):
-        for i in prange(nx):
-            for h in range(nz):
-                obj = objects[h,i,j]
-                if obj>0:
-                    objects[h,i,j] = old2new[obj]
-                    
-@njit(parallel=True)
-def interp_on_altitude_levels(var,Z,Zm,ZS): # var has to be np.float32 ???
-    # var (3D) =  variable defined on Zm levels with Gal-Chen and Somerville terrain-following coordinates
-    # Z (1D) =  altitude levels on which new_var in interpolated
-    # Zm (1D) = terrain-following model levels
-    # ZS (2D) = surface altitude
-    _,ny,nx = np.shape(var)
-    nz, = np.shape(Z)
-    ZTOP = Zm[-1]
-    new_var = np.full((nz,ny,nx), np.nan,dtype=var.dtype)
-    for j in prange(ny):
-        for i in range(nx):
-            for k in range(nz):
-                zs = ZS[j,i]
-                l = 0
-                if Z[k]<zs:
-                    continue
-                else:
-                    zm = ZTOP * (Z[k]-zs) / (ZTOP-zs)
-                    while Zm[l+1]<zm:
-                        l+=1
-                    dZ = Zm[l+1]-Zm[l]
-                    new_var[k,j,i] = ( var[l,j,i]*(Zm[l+1]-zm) + var[l+1,j,i]*(zm-Zm[l]) )/dZ
-    return new_var
-
-@njit()
-def MO_flux(MO,U,V,RHO,RV,RT,TH):
-    nz,ny,nx = np.shape(U)
-    flux =  np.zeros((4,nz),dtype=U.dtype)
-    for j in range(ny):
-        for i in range(nx):
-            i0 = i-1 if i>=1 else nx-1
-            j0 = j-1 if j>=1 else ny-1
-            for j_,i_,wind in [ (j,i0,U[:,j,i]) , (j0,i,V[:,j,i]) ]:
-                if MO[j_,i_] != MO[j,i]:
-                    sign = 1. if MO[j,i] else -1.
-                    for k in range(nz):
-                        massflux = sign*wind[k]*(RHO[k,j_,i_]+RHO[k,j,i])/2
-                        flux[0,k] += massflux
-                        flux[1,k] += massflux*(RV[k,j_,i_]+RV[k,j,i])/2 # vapor flux
-                        flux[2,k] += massflux*(RT[k,j_,i_]+RT[k,j,i])/2 # water flux
-                        flux[3,k] += massflux*(TH[k,j_,i_]+TH[k,j,i])/2 # heat flux
-    return flux
-
-@njit()
-def boundary_layer_height(z,ZS,rc,thv,rho,W,U,V):
-    ny,nx = np.shape(rc[0])
-    BLH = np.full((ny,nx),np.nan,dtype=floatype)
-    THVBL = np.zeros((ny,nx),dtype=floatype) 
-    WBL = np.zeros((ny,nx),dtype=floatype)
-    UBLH = np.zeros((ny,nx),dtype=floatype)
-    VBLH = np.zeros((ny,nx),dtype=floatype)
-    cloud_base_mask = np.zeros((ny,nx),dtype=intype)
-    ZTOP = z[-1]
-    for j in range(ny):
-        for i in range(nx):
-            mean_thv = thv[0,j,i]
-            mean_w = W[0,j,i]
-            mass = z[0]*rho[0,j,i]
-            for h in range(0,len(z)-1):
-                if rc[h,j,i]>1e-6:
-                    BLH[j,i] = ZS[j,i] + (ZTOP-ZS[j,i]) * z[h]/ZTOP
-                    cloud_base_mask[j,i] = 1
-                    break
-                if thv[h,j,i] > mean_thv + 0.3:
-                    BLH[j,i] = ZS[j,i] + (ZTOP-ZS[j,i]) * z[h]/ZTOP
-                    break
-                else:
-                    layer_mass = (rho[h+1,j,i]+rho[h,j,i])/2 * (z[h+1]-z[h])
-                    mean_thv = ( mean_thv*mass + (thv[h+1,j,i]+thv[h,j,i])/2 * layer_mass ) / ( mass+layer_mass)
-                    mean_w = ( mean_w*mass + W[h+1,j,i] * layer_mass ) / ( mass+layer_mass)
-                    mass += layer_mass
-            THVBL[j,i] = mean_thv
-            WBL[j,i] = mean_w
-            UBLH[j,i] = U[h,j,i]
-            VBLH[j,i] = V[h,j,i]
-    return BLH,cloud_base_mask,THVBL,WBL,UBLH,VBLH
-
-@njit()
-def surface_anomaly(VAR,z,zmean,ZS):
-    VARA = np.copy(VAR)
-    ny,nx = np.shape(VARA)
-    for j in range(ny):
-        for i in range(nx):
-            zVAR = ZS[j,i] + z[0]
-            k = 0
-            while zVAR>z[k+1]:
-                k+=1
-            dz = z[k+1]-z[k]
-            VARA[j,i] -= ( zmean[k]*(z[k+1]-zVAR) + zmean[k+1]*(zVAR-z[k]) )/dz
-    return VARA
-@njit()
-def horizontal_convergence(U,V):
-    CONV = np.zeros_like(U)
-    CONV[:,:-1,:] -= ( V[:,1:,:] - V[:,:-1,:] )/dx
-    CONV[:,-1,:] -= ( V[:,0,:] - V[:,-1,:] )/dx
-    CONV[:,:,:-1] -= ( U[:,:,1:] - U[:,:,:-1] )/dx
-    CONV[:,:,-1] -= ( U[:,:,0] - U[:,:,-1] )/dx
-    return CONV
 
 X,Y = np.meshgrid(x,y)
 ddot = 3*dx
@@ -317,7 +217,7 @@ def get_flat_precip(x,y,flat_X,flat_Y,precip):
 
 def emptyness(arrayCOO,end='\n'):
     print('Volume = {:02%}'.format(arrayCOO.nnz/arrayCOO.size),end=end)
-    
+
 def make_sparses_skyview(rcloud,rprecip,w,thetav,savePath):
     if not os.path.exists(savePath): os.makedirs(savePath) ; print('Directory created !')
 
@@ -328,11 +228,11 @@ def make_sparses_skyview(rcloud,rprecip,w,thetav,savePath):
     end = '--- '
     
     print("Interpolation",end=end)
-    new_rcloud = interp_on_altitude_levels(rcloud,new_z,Zm,ZS)
-    new_rprecip = interp_on_altitude_levels(rprecip,new_z,Zm,ZS)
-    # new_rtracer = interp_on_altitude_levels(rtracer,new_z,Zm,ZS)
-    new_w =interp_on_altitude_levels(w[1:],new_z,Zm[1:]/2+Zm[:-1]/2,ZS)
-    new_thva = interp_on_altitude_levels( thetav,new_z,Zm,ZS)
+    new_rcloud = AL_lin_interp(rcloud,new_z,Zm,ZS)
+    new_rprecip = AL_lin_interp(rprecip,new_z,Zm,ZS)
+    # new_rtracer = AL_lin_interp(rtracer,new_z,Zm,ZS)
+    new_w =AL_lin_interp(w[1:],new_z,Zm[1:]/2+Zm[:-1]/2,ZS)
+    new_thva = AL_lin_interp( thetav,new_z,Zm,ZS)
     new_thva -= np.nanmean(new_thva,axis=(1,2),keepdims=True)
     
     print("Threshold",end=end)
@@ -368,7 +268,7 @@ m = 2*np.pi*np.fft.fftfreq(ny,dx)
 kk,mm = np.meshgrid(k,m)
 k2 = kk**2+mm**2
 del(kk,mm)
-def wind_filter(U,V,lc):
+def wind_filter(U,V,lc=5e3):
     UV = U + 1j*V
     kc2 = (2*np.pi/lc)**2
     new_UV = np.fft.ifft2(np.exp(-k2/kc2/2)*np.fft.fft2(UV) )
@@ -405,90 +305,103 @@ def wind_filter(U,V,lc):
 # plot_US_VS(True)
 
 #%%
-N=3
-ft=20
-fig,axs=plt.subplots(ncols=N,figsize=(16,9))#,constrained_layout=True)
-wspace = 0.
-plt.subplots_adjust(left=0.0+wspace,right=1-wspace,bottom=0.30, top=0.95,wspace=wspace,hspace=wspace)
+if make_maps:
+    Nmaps=3 if '3maps' in img_maps_names[0] else 1
+    ft=40
+    wspace = 0.
+    if Nmaps==3:
+        fig_maps_BL,axs_maps_BL=plt.subplots(ncols=Nmaps,figsize=(32,18))#(16,9))#,constrained_layout=True)
+        plt.subplots_adjust(left=0.0+wspace,right=1-wspace,bottom=0.35, top=0.94,wspace=wspace,hspace=wspace)
+        text_title_BL = fig_maps_BL.text(0.5,0.97,simu+' '+seg+'  '+'00 h 00',fontsize=1.5*ft,ha='center',va='center')
+        
+        fig_maps_SL,axs_maps_SL=plt.subplots(ncols=Nmaps,figsize=(32,18))#(16,9))#,constrained_layout=True)
+        plt.subplots_adjust(left=0.0+wspace,right=1-wspace,bottom=0.35, top=0.94,wspace=wspace,hspace=wspace)
+        text_title_SL = fig_maps_SL.text(0.5,0.97,simu+' '+seg+'  '+'00 h 00',fontsize=1.5*ft,ha='center',va='center')
+        
+    if Nmaps==1:
+        fig_maps_list,axs_maps_list,text_title_list = [None]*len(img_maps_names) , [None]*len(img_maps_names) , [None]*len(img_maps_names)
+        for i in range(len(img_maps_names)):
+            fig_maps_list[i],axs_maps_list[i]=plt.subplots(ncols=Nmaps,figsize=(10,10))#(16,9))#,constrained_layout=True)
+            plt.subplots_adjust(left=0.0+wspace,right=1-wspace,bottom=0., top=1.,wspace=wspace,hspace=wspace)
+            text_title_list[i] = fig_maps_list[i].text(0.5,0.97,simu+' '+seg+'  '+'00 h 00',fontsize=1.0*ft,ha='center',va='center')
+            
+    nstarts = 40
+    px,py = np.meshgrid(x[::nx//nstarts]/1000,y[::ny//nstarts]/1000)
+    start_points = np.transpose(np.array([px.flatten(),py.flatten()]))
 
-fig.text(0.42,0.96,simu,fontsize=1.5*ft,ha='center')
-text_time = fig.text(0.58,0.96,'{} h {:02d}'.format(int(f0.time.dt.hour),int(f0.time.dt.minute)),fontsize=1.5*ft,ha='center')
-
-nstarts = 30
-px,py = np.meshgrid(x[::nx//nstarts]/1000,y[::ny//nstarts]/1000)
-start_points = np.transpose(np.array([px.flatten(),py.flatten()]))
-
-def plot_Nmaps(ZS,U,V,THVAS,BLH,PRS,cloud_base_mask,WBL,UBLH,VBLH,name,legend=False):
+from identification_methods import identify
+listVarNames = ['SVT001','WT']#[]#
+def thermalMask(dictVars):
+    TR = dictVars['SVT001'][0,nz1:nz2,ny1:ny2,nx1:nx2]
+    W = dictVars['WT'][0,nz1:nz2,ny1:ny2,nx1:nx2]
+    TR_std = np.std(TR,axis=(1,2))
+    TR_mean = np.mean(TR,axis=(1,2))
+    TR_stdmin = 0.5/(z+dz/2) * np.cumsum(dz*TR_std) # 0.05
+    TR_threshold = TR_mean+np.maximum(TR_std,TR_stdmin)
+    
+    mask = np.zeros((1,nz+2,ny+2,nx+2),dtype='bool')
+    mask[0,nz1:nz2,ny1:ny2,nx1:nx2] = np.logical_and( TR>TR_threshold.reshape(nz,1,1) , W>0 )
+    mask[0,:,0,:] = mask[0,:,-2,:]
+    mask[0,:,-1,:] = mask[0,:,1,:]
+    mask[0,:,:,0] = mask[0,:,:,-2]
+    mask[0,:,:,-1] = mask[0,:,:,1]
+    return mask
+    
+def plot_maps(fig_maps,axs_maps,text_title,ZS,maps_VAR,maps_params, PRS,MASK ,U,V,legend=False,short_title=False,ZS_labels=True,map_name=''):
+    
     flat_precip = get_flat_precip(x,y,flat_X,flat_Y,PRS)
     select_precip = flat_precip > 10**-4 # 1 mm of rain in 1 min
+    cb_length = 0.9 /Nmaps
+    cb_width = 0.03
+    cb_posy = 0.20
+    shrink = 1.
     
-    
-    
-    for i in range(N):
-        ax = axs[i]
+    for i in range(Nmaps):
+        ax = axs_maps[i] if Nmaps > 1 else axs_maps
         ax.clear()
         ax.set_aspect("equal")
         ax.set_xlim([x[0]/1000,x[-1]/1000])
         ax.set_ylim([y[0]/1000,y[-1]/1000])
         # ax.set_xticks([])
         if i>=0: ax.set_yticks([])
-        plt.xticks(fontsize=ft*2/3)
-        # ax.set_xlabel('km',fontsize=ft,rotation=0)
+        ax.tick_params(axis='x', labelsize=ft*2/3)
+        ax.set_xlabel('km',fontsize=ft,rotation=0)
         if orog:
-            CS = ax.contour(x/1000,y/1000,ZS, levels=[np.percentile(ZS,5),np.mean(ZS),np.percentile(ZS,95)],linewidths=1.,alpha=0.5,colors=['k'] , zorder=2)
-            contour_fmt='%d'
-            plt.clabel(CS, CS.levels, inline=True, inline_spacing=0, fmt=contour_fmt, fontsize=ft/3)
+            # CS = ax.contour(x/1000,y/1000,ZS, levels=[np.percentile(ZS,5),np.mean(ZS),np.percentile(ZS,95)],linewidths=1.,alpha=0.5,colors=['k'] , zorder=2)
+            CS = ax.contour(x/1000,y/1000,ZS, levels=[0,1000,2000,3000,4000],linewidths=1.,alpha=0.5,colors=['k'] , zorder=2)
+            if ZS_labels: plt.clabel(CS, CS.levels, inline=True, inline_spacing=0, fmt='%d', fontsize=ft/3)
         
-        ax.scatter(flat_X[select_precip]/1000, flat_Y[select_precip]/1000, s= flat_precip[select_precip]*2e2, c='black',zorder=100)
+        cf = ax.pcolormesh(x/1000,y/1000,maps_VAR[i],vmin=maps_params[i][0], vmax=maps_params[i][1],cmap=maps_params[i][2],shading='gouraud')
+        if legend:
+            cax = fig_maps.add_axes([(2*i+1)/Nmaps/2-cb_length/2, cb_posy, cb_length, cb_width])
+            cb = plt.colorbar(cf,cax=cax,shrink=shrink,orientation = "horizontal",extend=maps_params[i][3],format=maps_params[i][4])
+            if maps_params[i][5] is not None:
+                cb.set_ticks(maps_params[i][5]) # [-5,-2,-1,-0.5,-0.2,-0.1,0,0.1,0.2,0.5,1.,2.,5.]
+            cb.ax.tick_params(labelsize=ft*2/3)
+            cb.ax.set_title(maps_params[i][6],fontsize=ft)
+            cb.set_label(maps_params[i][7],fontsize=ft,rotation=0)
         
-    cb_length = 0.9 /N
-    cb_width = 0.03
-    cb_posy = 0.20
-    shrink = 1.
-    
-    ax = axs[0]
-    T_cf = ax.pcolormesh(x/1000,y/1000,THVAS,vmin=-4, vmax=4,cmap='RdBu_r',shading='gouraud')
+        if maps_params[i][8]:
+            ax.scatter(flat_X[select_precip]/1000, flat_Y[select_precip]/1000, s= flat_precip[select_precip]*1e2, c='black',zorder=100)
+        
+        # ax.contour(x/1000,y/1000,CBM, levels=[0.5],linewidths=2,alpha=1,colors=['grey'])#,colors=[CTcm( (z[cloud_top[obj]]/1000 -ct_lev[0])/ct_lev[-1] )])
+        if maps_params[i][9]=='CBM':
+            ax.contour(x/1000,y/1000,MASK, levels=[0.5],linewidths=1,alpha=1,colors=['grey'] )
+        if maps_params[i][9] in ['TBM','TTM']:
+            ax.contour(x/1000,y/1000,MASK, levels=[0.5],linewidths=0.5,alpha=0.7,colors=['darkgreen'] )
+            # ax.contourf(x/1000,y/1000,CBM,alpha=0.5,hatches=[None, '//'])
+            # ax.contourf(x/1000,y/1000,CBM,2,colors=['none','k'],alpha=0.5)
+        
+        if maps_params[i][10] is not None:
+            Umap,Vmap = wind_filter(U,V,maps_params[i][10])
+            ax.streamplot(x/1000,y/1000, Umap,Vmap, density=3, color='k', linewidth=3/10*np.sqrt(Umap**2+Vmap**2), arrowsize = 0.5,maxlength=1.,minlength=0.)#
+            
+            # ax.streamplot(x/1000,y/1000, Umap,Vmap, density=20, color='k', linewidth=3/10*np.sqrt(Umap**2+Vmap**2), arrowsize = 0. , start_points=start_points,maxlength=1.,minlength=0.1)#
+            # streamp = 
+            # for il,arrows in enumerate(streamp.arrows):
+            #     if max(streamp.lines[il].linewidths) < 1: arrows[il].remove()
     if legend:
-        cax = fig.add_axes([1/N/2-cb_length/2, cb_posy, cb_length, cb_width])
-        T_cb = plt.colorbar(T_cf,cax=cax,shrink=shrink,orientation = "horizontal",extend='both',format='%.1f')
-        # T_cb.set_ticks([-5,-2,-1,-0.5,-0.2,-0.1,0,0.1,0.2,0.5,1.,2.,5.])
-        T_cb.ax.tick_params(labelsize=ft*2/3)
-        T_cb.ax.set_title("$\\theta _v ^{\prime}$ and wind at 5m AGL",fontsize=ft)
-        T_cb.set_label(' K',fontsize=ft,rotation=0)
-    
-    # ax.contour(x/1000,y/1000,cloud_base_mask, levels=[0.5],linewidths=2,alpha=1,colors=['grey'])#,colors=[CTcm( (z[cloud_top[obj]]/1000 -ct_lev[0])/ct_lev[-1] )])
-    
-    US,VS = wind_filter(U[0],V[0],1e4)
-    ax.streamplot(x/1000,y/1000, US, VS, density=3, color='k', linewidth=2*np.sqrt(US**2+VS**2)/10 , arrowsize = 0.5,start_points=start_points)
-    
-
-    ax = axs[1]
-    BLH_cf = ax.pcolormesh(x/1000,y/1000,BLH,vmin=0.,vmax=4000.,cmap='rainbow',shading='gouraud')
-    if legend:
-        cax = fig.add_axes([3/N/2-cb_length/2, cb_posy, cb_length, cb_width])
-        BLH_cb = plt.colorbar(BLH_cf,cax=cax,shrink=shrink,orientation = "horizontal",extend='max',format='%d')
-        BLH_cb.set_ticks([0,1000,2000,3000,4000])
-        BLH_cb.ax.tick_params(labelsize=ft*2/3)
-        BLH_cb.ax.set_title("Top of the mixed layer",fontsize=ft)
-        BLH_cb.set_label(' m',fontsize=ft,rotation=0)
-    
-    ax.contour(x/1000,y/1000,cloud_base_mask, levels=[0.5],linewidths=1,alpha=1,colors=['k'])#,colors=[CTcm( (z[cloud_top[obj]]/1000 -ct_lev[0])/ct_lev[-1] )])
-    US,VS = wind_filter(UBLH,VBLH,1e4)
-    ax.streamplot(x/1000,y/1000, US, VS, density=3, color='k', linewidth=2*np.sqrt(US**2+VS**2)/10 , arrowsize = 0.5,start_points=start_points)
-    
-    
-    ax = axs[2]
-    W_cf = ax.pcolormesh(x/1000,y/1000,WBL,vmin=-5, vmax=5,cmap='seismic',shading='gouraud')
-    if legend:
-        cax = fig.add_axes([5/N/2-cb_length/2, cb_posy, cb_length, cb_width])
-        W_cb = plt.colorbar(W_cf,cax=cax,shrink=shrink,orientation = "horizontal",extend='both',format='%.1f')
-        # W_cb.set_ticks([-5,-2,-1,-0.5,-0.2,-0.1,0,0.1,0.2,0.5,1.,2.,5.])
-        W_cb.ax.tick_params(labelsize=ft*2/3)
-        W_cb.ax.set_title("Mean W in the mixed layer",fontsize=ft)
-        W_cb.set_label(' m/s',fontsize=ft,rotation=0)
-    
-    if legend:
-        cax=fig.add_axes([2/N-0.1,0.08, 0.2, 0.03])
+        cax=fig_maps.add_axes([2/Nmaps-0.1,0.08, 0.2, 0.03])
         cax.set_xlim([0.5,4.5])
         cax.set_ylim([0.,2.])
         cax.set_yticks([])
@@ -499,293 +412,465 @@ def plot_Nmaps(ZS,U,V,THVAS,BLH,PRS,cloud_base_mask,WBL,UBLH,VBLH,name,legend=Fa
         cax.set_xlabel('mm / min',fontsize=ft)
         cax.set_title('Rain at the surface',fontsize=ft)
         
-        cax=fig.add_axes([1/N-0.1,0.08, 0.2, 0.03])
+        cax=fig_maps.add_axes([1/Nmaps-0.1,0.08, 0.2, 0.03])
         cax.set_xlim([0.5,4.5])
         cax.set_ylim([0.,2.])
         cax.set_yticks([])
         cax.set_xticks([1,2,3,4])
         cax.set_xticklabels(['1','5','10','20',],size=ft*2/3)
         US,VS = np.array([[1,5,10,20],[1,5,10,20],[1,5,10,20]]) , np.zeros((3,4))
-        cax.streamplot(np.arange(1,5),np.arange(3),US,VS, density=3, color='k', linewidth=2*np.sqrt(US**2+VS**2)/10 , arrowsize = 0.5,start_points=np.array([[2.5,1.]]) )
+        cax.streamplot(np.arange(1,5),np.arange(3),US,VS, density=3, color='k', linewidth=3/10*np.sqrt(US**2+VS**2) , arrowsize = 0.5,start_points=np.array([[2.5,1.]]) )
         cax.set_xlabel('m/s',fontsize=ft)
         cax.set_title('Wind speed',fontsize=ft)
         
-    if not(legend):
-        text_time.set_text('{} h {:02d}'.format(int(f.time.dt.hour),int(f.time.dt.minute)))
+    date = str(f.time.data[0])[:10]
+    hour = '{:02d} h {:02d}'.format(int(f.time.dt.hour),int(f.time.dt.minute))
+    if short_title:
+        text_title.set_text(date+'  '+hour if dates else hour)
+    else:
+        text_title.set_text(map_name+' ' +simu+' '+seg+'  '+(date+'  '+hour if dates else hour))
+        
+        
+    if not os.path.exists(savePathFigures+'maps_video/'): os.makedirs(savePathFigures+'maps_video/') ; print('Directory created !')
+    name = savePathFigures+'maps_video/maps_video_'+map_name+'_'+simu+'_'+seg+'_'+ ( date+'_'+hour if dates else hour) +'.png'
+    fig_maps.savefig(name)
+    # print(' ---- Saved '+date+'  '+hour)
+    return name
+    
+if make_hist2D:
+    nvar = 15
+    nrows=3
+    ncols=(nvar +1)//nrows
+    fig_hist2D,axs_hist2D = plt.subplots(nrows=nrows,ncols=ncols,figsize=(19.2,10.8))
+    wspace = 0.1/nvar
+    plt.subplots_adjust(left=0.04,right=0.92,bottom=0.07,top=0.92,wspace=wspace,hspace=0.22)
+    text_title_hist2D = fig_hist2D.text(0.5,0.97,simu+' '+seg+' distribution profiles at 00 h 00',fontsize=20,ha='center',va='center')
+    # plt.suptitle(,fontsize=ft)
+    
+    
+def plot_hist2D(z,W,TH,TKE,surflay,thermals,ft=15): #RV, RC , RP , RT
+    nz = len(z)
+    ## Cas avec de l'eau
+    # anom_water = RT - np.nanmean(RT,axis=(1,2),keepdims=True)
+    # flux_water = w*anom_water
+    # T = TH * (P/100000.)**(2/7)
+    # iso = z[np.argmin(np.abs(np.mean(T,axis=(1,2))-T0))]
+    # RH = RH_water_ice(rv,T,P)
+    # thetav = TH * (1+ 1.61*RV)/(1+water)
+    # thetali = TH - TH/T /Cp * ( Lv(T)*(RC+RR) + Ls(T)*(RI+RS+RG) )
+    
+    ## Sans eau
+    thetav = TH
+    thetali = TH
+    
+    anom_thetav = thetav - np.nanmean(thetav,axis=(1,2),keepdims=True)
+    anom_thetali = thetali - np.nanmean(thetali,axis=(1,2),keepdims=True)
+    flux_thetali = W*anom_thetali
+    
+    ## Présentation convection profonde
+    # nvar = 18
+    # nrows=2
+    # pdf_variables = [ 'THT', water, 'RVT', 'RCT', 'RRT', anom_thetav , 'WT' , flux_water , flux_thetali,
+    #                   'UT' , 'VT' , 'RIT', 'RST', 'RGT', anom_thetav , 'WT' , flux_water , flux_thetali ]
+    # masks = [None,RC>1e-6]
+    # pdf_mask = [0,0,0,0,0,0,0,0,0,
+    #             0,0,0,0,0,1,1,1,1]
+    # pdf_names = ['$\\theta$','$r_t$','$r_v$','$r_l$','$r_r$',  '$ \\theta _v^{\prime} $', '$w$','$w·r_t^{\prime}$','$w·\\theta _{li}^{\prime}$',
+    #              '$u$','$v$','$ r_i$', '$r_s$','$r_g $', '$ (\\theta _v^{\prime})^{cloud}$', '$w^{cloud}$','$(w·r_t^{\prime})^{cloud}$','$(w·\\theta _{li}^{\prime})^{cloud}$']# '$-\\frac{\\partial u}{\\partial x}-\\frac{\\partial v}{\\partial y}$', 
+    # pdf_units = [' K  ', 'kg/kg','kg/kg','  kg/kg ','  kg/kg ',' K ', ' m/s ',' m/s·kg/kg  ',' m/s·K ',
+    #              ' m/s ',' m/s ','kg/kg','  kg/kg ','  kg/kg ',' K ', ' m/s ',' m/s·kg/kg  ',' m/s·K ']#' \frac{m/s}{km} ', 
+    # wm = 23 # m/s # wind maximum value
+    # rmax=-1.6
+    # rmin=-5.5
+    # pdf_ranges = [ [290,359,'lin'],[0,0.018,'lin'],[rmin,rmax,'log'],[rmin,rmax,'log'],[rmin,rmax,'log'] ,[-6,6,'lin'], [-wm,wm,'lin'], [-0.35,0.35,'lin'], [-350,350,'lin'],
+    #               [-wm,wm,'lin'],[-wm,wm,'lin'],[rmin,rmax,'log'],[rmin,rmax,'log'],[rmin,rmax,'log'] ,[-6,6,'lin'], [-wm,wm,'lin'], [-0.35,0.35,'lin'], [-350,350,'lin']] #,[-35,35,'lin']
+    
+    ## Présentation convection peu profonde sèche
+    # nvar = 15
+    # nrows=3
+    pdf_variables = [ TH, anom_thetav , W , flux_thetali, TKE, 
+                      TH , anom_thetav , W , flux_thetali, TKE, 
+                      TH , anom_thetav , W , flux_thetali, TKE ]
+    masks = [None,surflay,thermals] # RC>1e-6
+    # mask_names = ['all','t','s']
+    pdf_mask = [0,0,0,0,0,
+                1,1,1,1,1,
+                2,2,2,2,2]
+    # pdf_names = ['$\\theta ^{all}$','$ { \\theta ^{\prime} }^{all}$', '$w^{all} $','${ w·\\theta^{\prime} }^{all}$','$k ^{all}$',
+    #              '$u ^{all}$'      ,'$ { \\theta ^{\prime} } ^s $', '$w^s $','${ w·\\theta ^{\prime} } ^s$','$k ^s$',
+    #              '$v ^{all}$'      ,'$ { \\theta ^{\prime} } ^t $', '$w^t $','${ w·\\theta ^{\prime} } ^t$','$k ^t$' ]
+    pdf_names = ['$\\theta ^{all}$','$ { \\theta ^{\prime} }^{all}$', '$w^{all} $','${ w·\\theta^{\prime} }^{all}$','$k ^{all}$',
+                 '$\\theta ^{s}$'      ,'$ { \\theta ^{\prime} } ^s $', '$w^s $','${ w·\\theta ^{\prime} } ^s$','$k ^s$',
+                 '$\\theta ^{t}$'      ,'$ { \\theta ^{\prime} } ^t $', '$w^t $','${ w·\\theta ^{\prime} } ^t$','$k ^t$' ]
+    pdf_units = [' K  ' ,' K ', ' m/s ',' m/s·K ',' $m^2 / s^2$',
+                 ' m/s ',' K ', ' m/s ',' m/s·K ',' $m^2 / s^2$',
+                 ' m/s ',' K ', ' m/s ',' m/s·K ',' $m^2 / s^2$' ]
+    wm = 7 # m/s # wind maximum value
+    tam = 6 # K #  max temperature anomaly
+    thmax = 330
+    thmin = 300
+    wtam = 8
+    tkem = 3. # wm**2/2
+    pdf_ranges = [[thmin,thmax,'lin'],[-tam,tam,'lin'], [-wm,wm,'lin'], [-wtam,wtam,'lin'], [0,tkem,'lin'],
+                  [thmin,thmax,'lin'],[-tam,tam,'lin'], [-wm,wm,'lin'], [-wtam,wtam,'lin'], [0,tkem,'lin'],
+                  [thmin,thmax,'lin'],[-tam,tam,'lin'], [-wm,wm,'lin'], [-wtam,wtam,'lin'], [0,tkem,'lin'] ]
+    
+    nbins = 100
+    nz_max = nz
+    if nz_max==nz:
+        z_bins = np.append(z[:-1] + (z[1:] - z[:-1])/2 , z[-1]+(z[-1] - z[-2])/2)
+    else:
+        z_bins = z[:nz_max] + (z[1:nz_max+1] - z[:nz_max])/2
+    
+    
+    for iv in range(len(pdf_variables)):
+        ax = axs_hist2D[iv//ncols,iv%ncols]
+        ax.clear()
+        if pdf_ranges[iv][2] == 'lin':
+            bins = np.linspace(pdf_ranges[iv][0],pdf_ranges[iv][1],nbins)
+    #        ax.set_xlim([pdf_ranges[iv][0],pdf_ranges[iv][1]])
+        elif pdf_ranges[iv][2] == 'log':
+            bins = np.insert( np.logspace(pdf_ranges[iv][0],pdf_ranges[iv][1],nbins-1) , 0, 0., axis=0)
+            ax.set_xscale('log')
+            ax.set_xlim([10**pdf_ranges[iv][0],10**pdf_ranges[iv][1]])
+            
+        var = pdf_variables[iv]
+        hist_field = np.zeros((nz_max-1,nbins-1))
+        for iz in range(1,nz_max) :
+            mask = masks[pdf_mask[iv]]
+            if mask is None:
+                hist_field[iz-1,:], _ = np.histogram( var[iz] ,bins=bins, density=False)
+            else:
+                hist_field[iz-1,:], _ = np.histogram( var[iz][mask[iz]] ,bins=bins, density=False)
+            
+        ax_X, ax_Y = np.meshgrid(  bins, z_bins/1000 )
+        im = ax.pcolormesh(ax_X,ax_Y,hist_field/nx/ny, norm=matplotlib.colors.LogNorm(vmin=1/nx/ny,vmax=1.), shading= 'flat',cmap='magma_r')#, cmap='gnuplot2_r')## cmap='hot_r')#,cmap='nipy_spectral_r')#
+        ax.set_title(pdf_names[iv] + '   ('+pdf_units[iv]+')' ,fontsize=ft)
+        
+        
+        if pdf_ranges[iv][0] == - pdf_ranges[iv][1]:
+            ax.axvline(0,linestyle='--',color='k',lw=1)
+        ax.plot( np.sum(hist_field * (bins[1:]/2+bins[:-1]/2).reshape((1,nbins-1)) ,axis=1 )/np.sum(hist_field,axis=1) ,(z_bins[1:]+z_bins[:-1])/2000  , color='chartreuse',lw=1.5)
+        
+        # if pdf_variables[iv] in ['RCT', 'RRT','RIT', 'RST', 'RGT']:
+        #     ax.axhline(iso/1000,linestyle='--',color='b',lw=1.5)
+        #     ax.text(bins[2],iso/1000,'0°C',fontsize=ft,color='b', ha="left", va="center")
 
-    if not os.path.exists(savePathVideo+'maps_video/'): os.makedirs(savePathVideo+'maps_video/') ; print('Directory created !')
-    
-    plt.savefig(savePathVideo+'maps_video/maps_video_{:02d}h{:02d}'.format(int(f.time.dt.hour),int(f.time.dt.minute))+simu+'.png')
-    
-    print(' ---- Saved {:02d}h{:02d}'.format(int(f.time.dt.hour),int(f.time.dt.minute)))
+        if iv==len(pdf_variables)-1:# and file == lFiles[0]:
+            pdf_cb = plt.colorbar(im, cax=fig_hist2D.add_axes([0.93, 0.2, 0.02, 0.6]) ,ticks=[10**-5,10**-4,10**-3,10**-2,10**-1,1],shrink=1.,orientation = "vertical")
+            pdf_cb.ax.tick_params(labelsize=ft*2/3)
+            pdf_cb.set_label("Density",fontsize=ft)
+        
+        ax.set_ylim([-0.1,z_bins[-1]/1000+0.1])
+        if iv%ncols==0:
+            ax.set_ylabel('Altitude (km)',fontsize=ft*2/3)
+        else:
+            # ax.set_yticks([])
+            ax.set_yticklabels([])
+#        ax.set_xticks([])
+        # ax.set_xlabel(pdf_units[iv],fontsize=ft*2/3)
+        ax.grid(axis='y')
+        
+    date = str(f.time.data[0])[:10]
+    hour = '{:02d} h {:02d}'.format(int(f.time.dt.hour),int(f.time.dt.minute))
+    # plt.suptitle(simu+' '+seg+' distribution profiles at '+(date+'  '+hour if dates else hour),fontsize=ft)
+    text_title_hist2D.set_text(simu+' '+seg+' distribution profiles at '+(date+'  '+hour if dates else hour))
+                                        
+    if not os.path.exists(savePathFigures+'pdf_profiles/'): os.makedirs(savePathFigures+'pdf_profiles/') ; print('Directory created !')
+    name = savePathFigures+'pdf_profiles/pdf_profiles_'+simu+'_'+seg+'_'+ ( date+'_'+hour if dates else hour) +'.png'
+    fig_hist2D.savefig(name)
+    # print(' ---- Saved '+date+'  '+hour)
+    return name
     
 #%%
-nvarT = 3
-nvar = 9
+VAR3D_2mean_names = ['ALPHA','RHO','TH','RV','THV','CF','P','TR','W','U','V','TKE','WTH']
+VAR3D_2mean_units = ['','kg/m3','K','kg/kg','K','','Pa','kg/kg','m/s','m/s','m/s','m²/s²','m/sK']
+VAR2D_2mean_names = ['H','LE','TSE','TPW','PRS','BLH','THVBL']
+VAR2D_2mean_units = ['W/m²','W/m²','J/m²','kg/m²','mm/s','m','K']
+nvar2D = 7
+nvar3D = 13 # 14
 nflux = 4
-# timeH = np.zeros(nt)
-data_mean = np.full((nvar,nt,nz),np.nan,dtype=floatype)
-dataT_mean = np.zeros((nvarT,nt),dtype=floatype)
-if orog:
-    data_flux_MO = np.full((nflux,nt,nz),np.nan,dtype=floatype)
-    data_mean_MO = np.full((nvar,nt,nz),np.nan,dtype=floatype)
-    data_mean_PL = np.full((nvar,nt,nz),np.nan,dtype=floatype)
-    dataT_mean_MO = np.zeros((nvarT,nt),dtype=floatype)
-    dataT_mean_PL = np.zeros((nvarT,nt),dtype=floatype)
 
+regions = [] ; region_types = [] ; region_names = []
+regions.append(np.ones((ny,nx),dtype=np.bool_))    ; region_types.append('2D') ; region_names.append('a')
+regions.append(np.ones((ny,nx),dtype=np.bool_))    ; region_types.append('3D') ; region_names.append('s')
+regions.append(np.ones((nZ,ny,nx),dtype=np.bool_)) ; region_types.append('3D') ; region_names.append('t')
+regions.append(np.ones((nZ,ny,nx),dtype=np.bool_)) ; region_types.append('3D') ; region_names.append('e')
+if orog:
+    regions.append(MO) ; region_types.append('2D') ; region_names.append('MO')
+    regions.append(PL) ; region_types.append('2D') ; region_names.append('PL')
+    dzrange = 250
+    for zrange in range(0,int(ZS.max()),dzrange):
+        reg3D = np.zeros((nZ,ny,nx),dtype=np.bool_)
+        reg2D = np.logical_and( ZS>= zrange , ZS<zrange+dzrange )
+        reg3D[:,reg2D] = True
+        regions.append(reg3D) ; region_types.append('3D') ; region_names.append('t_'+str(zrange))
+
+nreg = len(regions)         
+# timeH = np.zeros(nt)
+
+data3D_mean = np.full((nreg,nvar3D,nt,nZ),np.nan,dtype=floatype)
+data2D_mean = np.zeros((nreg,nvar2D,nt),dtype=floatype)
+if orog: data_flux_MO = np.full((nflux,nt,nz),np.nan,dtype=floatype)
+
+#%%
 times = f0.time.data
 it0 = 1
-img = []
+
+img_maps_list = [[] for i in range(len(img_maps_names))]
+
+img_hist2D = []
 for it,fname in enumerate(lFiles):
+    print()
     time0 = time.time()
     f = xr.open_dataset(fname,engine='h5netcdf')
     def npf(v,dtype=floatype):
-        return np.array(f[v][0,nz1:nz2,ny1:ny2,nx1:nx2],dtype=dtype)
+        if v in var_names:
+            return np.array(f[v][0,nz1:nz2,ny1:ny2,nx1:nx2],dtype=dtype)
+        else:
+            return np.zeros((nz2-nz1,ny,nx),dtype=dtype)
+    def npf2D(v,dtype=floatype):
+        if v in var_names:
+            return np.array(f[v][0,ny1:ny2,nx1:nx2],dtype=dtype)
+        else:
+            return np.zeros((ny,nx),dtype=dtype)
+        
     if it>0: times = np.concatenate((times,f.time.data))
-    timeH = ' {:02d}h{:02d}'.format(int(f.time.dt.hour),int(f.time.dt.minute)) # year = str(f.time.data[0])[:10]+
+    timeH = ' {:02d}h{:02d}'.format(int(f.time.dt.hour),int(f.time.dt.minute)) # date = str(f.time.data[0])[:10]+
     # timeH[it] = f.time.dt.hour + f.time.dt.minute/60
     print(time.ctime()[-13:-5], timeH ,end=' ')
     
+    U = npf('UT') ; U = (U+np.roll(U,1,axis=2))/2
+    V = npf('VT') ; V = (V+np.roll(V,1,axis=1))/2
+    W = npf('WT') ; W = (W+np.roll(W,-1,axis=0))/2
+    TKE = npf('TKET')
+    P = npf('PABST')
     TH = npf('THT')
     RV = npf('RVT')
     RC = npf('RCT')+npf('RIT')
     RP = npf('RRT')+npf('RST')+npf('RGT')
     RT = RV+RC+RP
-    P = npf('PABST')
-    W = npf('WT')
-    U = npf('UT')
-    V = npf('VT')
     TR = npf('SVT001')
-    PRS = np.array(f.ACPRRSTEP[0,ny1:ny2,nx1:nx2],dtype=floatype)
     
+    PRS = npf2D('ACPRRSTEP')
+
     print(' Read :',str(round(time.time()-time0,1))+' s',end=' ') ; time0 = time.time()
     
-    # T = TH * (P/100000.)**(2/7)
-    THV = TH * (1.+ 1.61*RV)/(1.+ RT )
-    Rd = 287.04     # J/kg/K 
-    RHO = P/Rd/ (THV * (P/100000.)**(2/7))
-    CONV = horizontal_convergence(U,V)
-    BLH,cloud_base_mask,THVBL,WBL,UBLH,VBLH = boundary_layer_height(z,ZS,RC,THV,RHO,W,U,V)
+    # T = TH * (P/p0)**(2/7)
+    THV = TH * (1.+ Md/Mv*RV)/(1.+ RT )
+    RHO = P/Rd/ (THV * (P/p0)**(2/7))
+    H = npf2D('DUMMY2D1') * Cp * RHO[0]  # sensible heat flux K*m/s  to   W/m²   mutliplying by rho and     Cp = 1004.71 J/K/kg
+    LE = npf2D('DUMMY2D2') * Lv * RHO[0]
+    CONV = horizontal_convergence(U,V,dx)
+    
+    if 'SVT001' in var_names and use_thermals:
+        thermals,_ = identify(fname, listVarNames, thermalMask, name="tracer_updraft",delete=10,write=False,rename=False)
+        thermals = np.array(thermals[0,nz1:nz2,ny1:ny2,nx1:nx2],dtype=np.int32)
+        change_label(thermals)
+        print(' Thermals:',str(round(time.time()-time0,1))+' s',end=' ') ; time0 = time.time()
+    else:
+        thermals = np.zeros((nz2-nz1,ny,nx),dtype=np.int32)
+        
+    BLH,CBM,TTM,THVBL,WBL,UBL,VBL,UBLH,VBLH = boundary_layer_diags(Zm,ZS,RC,THV,RHO,W,U,V,thermals)
+    SLD,TBM,THVSL,WSL,USL,VSL = surface_layer_diags(Zm,ZS,THV,RHO,W,U,V,thermals)
+    SL = AL_SL(Z,ZS,SLD)
+
+    TSE = dz_shrink * np.sum( dz.reshape(nz,1,1)*RHO*Cp*TH , axis=0) # total sensible energy # J/m^2
+    TPW = dz_shrink * np.sum( dz.reshape(nz,1,1)*RHO*RT , axis=0) # total precipitable water # kg/m^2
     
     print(' Compute variables:',str(round(time.time()-time0,1))+' s',end=' ') ; time0 = time.time()
     
-    listVarNames = ['SVT001','WT']#[]#
-    def thermalMask(dictVars):
-        TR = dictVars['SVT001'][0,nz1:nz2,ny1:ny2,nx1:nx2]
-        W = dictVars['WT'][0,nz1:nz2,ny1:ny2,nx1:nx2]
-        TR_std = np.std(TR,axis=(1,2))
-        TR_mean = np.mean(TR,axis=(1,2))
-        TR_stdmin = 0.05/(z+dz/2) * np.cumsum(dz*TR_std)
-        TR_threshold = TR_mean+np.maximum(TR_std,TR_stdmin)
+    
+    
+    if make_charac:
+        # variables = np.array([U,V,W,CONV,THV,P,TR,RC,RP,RT,W*RHO*RT],dtype=np.float32 ) 
+        variables = [U,V,W,CONV,THV,P,TR,RC,RP,RT,W*RHO*RT]
+        charac,area,pos = charac_opti_3D(thermals, variables )
+        print(' Charac:',str(round(time.time()-time0,1))+' s',end=' ') ; time0 = time.time()
+    
+        if not os.path.exists(savePathObjects): os.makedirs(savePathObjects) ; print('savePath directory created !')
+        np.savez_compressed(savePathObjects+'objects_charac_area_pos.{:03d}'.format(it+it0),objects=thermals,charac=charac,area=area,pos=pos)
+        print(' Save charac:',str(round(time.time()-time0,1))+' s',end=' ') ; time0 = time.time()
         
-        mask = np.zeros((1,nz+1,ny+2,nx+2),dtype='bool')
-        mask[0,nz1:nz2,ny1:ny2,nx1:nx2] = np.logical_and( TR>TR_threshold.reshape(nz,1,1) , W>0 )
-        mask[0,:,0,:] = mask[0,:,-2,:]
-        mask[0,:,-1,:] = mask[0,:,1,:]
-        mask[0,:,:,0] = mask[0,:,:,-2]
-        mask[0,:,:,-1] = mask[0,:,:,1]
-        return mask
+    if make_sparses:
+        make_sparses_skyview(RC,RP,W,THV,savePathSkyView)
+        print(' SkyView sparses:',str(round(time.time()-time0,1))+' s',end=' ') ; time0 = time.time()
     
-    objects,_ = identify(fname, listVarNames, thermalMask, name="tracer_updraft",delete=10,write=False,rename=False)
-    print(' Identify:',str(round(time.time()-time0,1))+' s',end=' ') ; time0 = time.time()
+    if make_hori_mean:
+        # if orog:
+        RHO_ = AL_lin_interp( RHO,Z,Zm,ZS)
+        TH_ = AL_lin_interp( TH,Z,Zm,ZS)
+        RV_ = AL_lin_interp(RV,Z,Zm,ZS)
+        THV_ = AL_lin_interp( THV,Z,Zm,ZS)
+        RC_ = AL_lin_interp(RC,Z,Zm,ZS)
+        P_ = AL_lin_interp( P,Z,Zm,ZS)
+        TR_ = AL_lin_interp(TR,Z,Zm,ZS)
+        W_ = AL_lin_interp(W,Z,Zm,ZS)
+        U_ = AL_lin_interp(U,Z,Zm,ZS)
+        V_ = AL_lin_interp(V,Z,Zm,ZS)
+        TKE_ = AL_lin_interp(TKE,Z,Zm,ZS)
+        thermals_ = AL_objects(thermals,Z,Zm,ZS) ; thermals_[W_<=0] = 0
+        # else:
+        #     RHO_=RHO ; TH_=TH ; RV_=RV ; THV_=THV ; RC_=RC ; P_=P ; TR_=TR ; W_=W ; U_=U ; V_=V ; TKE_=TKE ; thermals_ = thermals
+        print('Interpolations on altitude levels :',str(round(time.time()-time0,1))+' s',end=' ') ; time0 = time.time()
+        
+        regions[1] = SL
+        regions[2] = np.logical_and( thermals_>0  , ~SL )
+        regions[3] = np.logical_and( thermals_==0 , ~SL )
+        
+        VAR3D_2mean = ['ALPHA',RHO_,TH_,RV_,THV_,RC_>1e-6,P_,TR_,W_,U_,V_,TKE_,'WTH']
+        VAR2D_2mean = [H,LE,TSE,TPW,PRS,BLH,THVBL]
+        for ir,reg in enumerate(regions):
+            for iv,VAR in enumerate(VAR3D_2mean):
+                if region_types[ir] == '2D':
+                    if type(VAR)==str:
+                        if VAR=='ALPHA':
+                            data3D_mean[ir,iv,it,:] = np.mean(RHO_[:,reg]>0,axis=1)
+                        elif VAR=='WTH':
+                            WpTHp = ( W_-np.nanmean(W_[:,reg],axis=1).reshape(nZ,1,1)) * (TH_-np.nanmean(TH_[:,reg],axis=1).reshape(nZ,1,1))
+                            data3D_mean[ir,iv,it,:] = np.nanmean(WpTHp[:,reg],axis=1)
+                    else:
+                        data3D_mean[ir,iv,it,:] = np.nanmean(VAR[:,reg],axis=1)
+                    
+                elif region_types[ir] == '3D':
+                    if region_names[ir][:2]=='t_':
+                        reg = np.logical_and(reg,regions[2])
+                    for iz in range(nZ):
+                        if type(VAR)==str:
+                            if VAR=='ALPHA':
+                                data3D_mean[ir,iv,it,iz] = np.mean(reg[iz]>0)
+                            elif VAR=='WTH':
+                                data3D_mean[ir,iv,it,iz] = np.mean( ( W_[iz,reg[iz]]-np.mean(W_[iz,reg[iz]])) * ( TH_[iz,reg[iz]]-np.mean(TH_[iz,reg[iz]])) )
+                        else:
+                            data3D_mean[ir,iv,it,iz] = np.nanmean(VAR[iz,reg[iz]])
+            
+            for iv,VAR in enumerate(VAR2D_2mean):
+                if region_types[ir] == '2D':
+                    data2D_mean[ir,iv,it] = np.mean(VAR[reg])
+        
+        if orog:
+            data_flux_MO[:,it,:] = MO_flux(MO,U,V,RHO,RV,RT,TH)
+        
+        print('Nanmeans :',str(round(time.time()-time0,1))+' s',end=' ') ; time0 = time.time()
     
-    objects = np.array(objects[0,nz1:nz2,ny1:ny2,nx1:nx2],dtype=np.int32)
-    change_label(objects)
-    # variables = np.array([U,V,W,CONV,THV,P,TR,RC,RP,RT,W*RHO*RT],dtype=np.float32 ) 
-    variables = [U,V,W,CONV,THV,P,TR,RC,RP,RT,W*RHO*RT]
-    charac,area,pos = charac_opti_3D(objects, variables )
-    print(' Charac:',str(round(time.time()-time0,1))+' s',end=' ') ; time0 = time.time()
-    
-    if not os.path.exists(savePathObjects): os.makedirs(savePathObjects) ; print('savePath directory created !')
-    np.savez_compressed(savePathObjects+'objects_charac_area_pos.{:03d}'.format(it+it0),objects=objects,charac=charac,area=area,pos=pos)
-    print(' Save charac:',str(round(time.time()-time0,1))+' s',end=' ') ; time0 = time.time()
-    
-    make_sparses_skyview(RC,RP,W,THV,savePathSkyView)
-    print(' SkyView sparses:',str(round(time.time()-time0,1))+' s',end=' ') ; time0 = time.time()
+    if make_maps:
+        # THVAS = AGL_lin_anomaly(THV[0],2,Z,data3D_mean[2,it],ZS) ##  [-4,4,'RdBu_r','both','%.1f',None,"$\\theta _v ^{\prime}$ and wind at 5m AGL",' K',True,None,'10m']
+        
+        for i,maps_name in enumerate(img_maps_names):
+
+            if maps_name=='video_3maps_BL':
+                maps_VAR = [BLH,THVBL,WBL]
+                maps_params = [[0.,5000.,'rainbow','max','%d',[0,1000,2000,3000,4000],"Top of the mixed layer",' m',True,None,None],
+                               [300,320,'turbo','both','%d',None,"$\\theta_v$ and mean wind",' K',True,None,2e3],
+                               # [292.5,322.5,'turbo','both','%d',None,"$\\theta_v$ and wind at 10m AGL",' K',True,None,'10m'],
+                                [-5,5,Wcm,'both','%.1f',None,"Mean W and thermal top",' m/s',True,'TTM',None] ]
+                img_maps_list[i].append( plot_maps(fig_maps_BL,axs_maps_BL,text_title_BL,ZS,maps_VAR,maps_params, PRS,TTM,UBL,VBL,legend=True if it == 0 else False ,map_name='BL') )
+            elif maps_name=='video_3maps_SL':
+                maps_VAR = [SLD,THVSL,WSL]
+                maps_params = [[0.,100.,'rainbow','max','%d',None,"Depth of the surface layer",' m',True,None,None],
+                               [300,320,'turbo','both','%d',None,"Mean  $\\theta_v$ and Mean wind",' K',True,None,2e3],
+                                [-5,5,Wcm,'both','%.1f',None,"Mean W and thermal base",' m/s',True,'TBM',None] ]
+                img_maps_list[1].append( plot_maps(fig_maps_SL,axs_maps_SL,text_title_SL,ZS,maps_VAR,maps_params, PRS,TBM,USL,VSL,legend=True if it == 0 else False ,map_name='SL') )
+            
+            # maps_VAR = [THV[0],BLH,1e3*RV[0]]
+            # maps_params = [[292.5,322.5,'turbo','both','%d',None,"$\\theta_v$ and wind at 10m AGL",' K',True,None,'10m'],
+            #                [0.,5000.,ZScm,'max','%d',[0,1000,2000,3000,4000],"Top of the mixed layer",' m',True,'CBM',None],
+            #                [0,20,'YlGnBu','both','%.1f',None,"$r_v$ and wind at 10m AGL",' g/kg',True,None,'10m'] ]
+            
+            
+            # maps_VAR = [RV[0],TCW,WBL]
+            # maps_params = [[0,20,'YlGnBu','both','%.1f',None,"$r_v$ and wind at 10m AGL",' g/kg',True,None,'10m'],
+            #                [0.,5000.,ZScm,'max','%d',[0,1000,2000,3000,4000],"Top of the mixed layer",' m',True,'CBM',None],
+            #                [-5,5,'seismic','both','%.1f',None,"Mean W in the mixed layer",' m/s',True,None,None] ]
+        
+            elif maps_name=='gif_BLH':
+                maps_VAR = [BLH]
+                maps_params = [[0.,4000.,'turbo','max','%d',[0,1000,2000,3000,4000],"Top of the mixed layer",' m',False,None,None]]
+                # maps_params = [[0.,5000.,'rainbow','max','%d',[0,1000,2000,3000,4000],"Top of the mixed layer",' m',True,None,None]]
+                img_maps_list[i].append( plot_maps(fig_maps_list[i],axs_maps_list[i],text_title_list[i],ZS,maps_VAR,maps_params, PRS,TTM,UBL,VBL,legend=False,short_title=True,ZS_labels=False ,map_name='BLH') )
+            elif maps_name=='gif_WBL':
+                maps_VAR = [WBL]
+                maps_params = [[-5,5,Wcm,'both','%.1f',None,"Mean W in mixed layer",' m/s',False,None,None] ]
+                img_maps_list[i].append( plot_maps(fig_maps_list[i],axs_maps_list[i],text_title_list[i],ZS,maps_VAR,maps_params, PRS,TTM,UBL,VBL,legend=False ,short_title=True,ZS_labels=False,map_name='WBL') )
+            elif maps_name=='gif_THVA2m':
+                AGL = 2.
+                AL = Zm[Zm<np.max(ZS)+1.1*np.max(dz)]
+                maps_VAR = [AGL_lin_anomaly( AGL_lin_interp(THV,AGL,Zm,ZS) ,AGL,AL,np.nanmean(AL_lin_interp(THV,AL,Zm,ZS),axis=(1,2)) ,ZS )]
+                maps_params = [[-4,4,'RdBu_r','both','%.1f',None,"Surface buoyancy $\\theta _v ^{\prime}$ at 2m AGL",' K',False,None,None]]
+                img_maps_list[i].append( plot_maps(fig_maps_list[i],axs_maps_list[i],text_title_list[i],ZS,maps_VAR,maps_params, PRS,TTM,UBL,VBL,legend=False,short_title=True ,ZS_labels=False,map_name='THVA2m') )
+        
+        print('Make and save maps :' ,str(round(time.time()-time0,1))+' s',end=' ') ; time0 = time.time()
+        
+    if make_hist2D:
+        _ = plot_hist2D(Z,W_,TH_,TKE_,regions[1],regions[2])
+        # name = plot_hist2D(Z,W_,TH_,TKE_,regions[1],regions[2])
+        # img_hist2D.append(name)
+        
+
+#%%
+if make_hori_mean:
+    ds_dict = { "ZS": (("y", "x"), ZS,{"units":"m"}) , "dz":(("z",),dZ,{"units":"m"}) }
+    for ir,name_reg in enumerate(region_names):
+        if region_types[ir] == '2D':
+            ds_dict[name_reg] = (("y", "x"), regions[ir],{"units":"bool"})
+        for iv,name_var in enumerate(VAR3D_2mean_names):
+            name = name_var if name_reg=='a' else name_var+'_'+name_reg
+            ds_dict[name] = (("time","z"),data3D_mean[ir,iv,:],{"units":VAR3D_2mean_units[iv]})
+        for iv,name_var in enumerate(VAR2D_2mean_names):
+            name = name_var if name_reg=='a' else name_var+'_'+name_reg
+            ds_dict[name] = (("time",),data2D_mean[ir,iv],{"units":VAR2D_2mean_units[iv]})
     
     if orog:
-        TH_ = interp_on_altitude_levels( TH,Z,Zm,ZS)
-        RV_ = interp_on_altitude_levels(RV,Z,Zm,ZS)
-        THV_ = interp_on_altitude_levels( THV,Z,Zm,ZS)
-        RC_ = interp_on_altitude_levels(RC,Z,Zm,ZS)
-        P_ = interp_on_altitude_levels( P,Z,Zm,ZS)
-        TR_ = interp_on_altitude_levels(TR,Z,Zm,ZS)
-        W_ = interp_on_altitude_levels(W,Z,Zm,ZS)
-        U_ = interp_on_altitude_levels(U,Z,Zm,ZS)
-        V_ = interp_on_altitude_levels(V,Z,Zm,ZS)
-    else:
-        TH_=TH ; RV_=RV ; THV_=THV ; RC_=RC ; P_=P ; TR_=TR ; W_=W ; U_=U ; V_=V
-    print('Interpolations on altitude levels :',str(round(time.time()-time0,1))+' s',end=' ') ; time0 = time.time()
-    
-    dataT_mean[0,it] = np.mean(PRS)
-    dataT_mean[1,it] = np.mean(BLH)
-    dataT_mean[2,it] = np.mean(THVBL)
-    data_mean[0,it] = np.nanmean(TH_,axis=(1,2)) # K
-    data_mean[1,it] = np.nanmean(RV_,axis=(1,2)) # g/kg
-    data_mean[2,it] = np.nanmean(THV_,axis=(1,2)) # K
-    data_mean[3,it] = np.nanmean( RC_>1e-6 ,axis=(1,2)) # cloud fraction
-    data_mean[4,it] = np.nanmean(P_,axis=(1,2)) # Pa
-    data_mean[5,it] = np.nanmean(TR_,axis=(1,2))
-    data_mean[6,it] = np.nanmean(W_,axis=(1,2)) # m/s
-    data_mean[7,it] = np.nanmean(U_,axis=(1,2)) # m/s
-    data_mean[8,it] = np.nanmean(V_,axis=(1,2)) # m/s
-    
-    if orog:
-        data_flux_MO[:,it,:] = MO_flux(MO,U,V,RHO,RV,RT,TH)
-        
-        dataT_mean_MO[0,it] = np.mean(PRS[MO])
-        dataT_mean_MO[1,it] = np.mean(BLH[MO])
-        dataT_mean_MO[2,it] = np.mean(THVBL[MO])
-        data_mean_MO[0,it] = np.nanmean(TH_[:,MO],axis=1) # K
-        data_mean_MO[1,it] = np.nanmean(RV_[:,MO],axis=1) # g/kg
-        data_mean_MO[2,it] = np.nanmean(THV_[:,MO],axis=1) # K
-        data_mean_MO[3,it] = np.nanmean( RC_[:,MO]>1e-6,axis=1) # cloud fraction
-        data_mean_MO[4,it] = np.nanmean(P_[:,MO],axis=1) # Pa
-        data_mean_MO[5,it] = np.nanmean(TR_[:,MO],axis=1)
-        data_mean_MO[6,it] = np.nanmean(W[:,MO],axis=1) # m/s
-        data_mean_MO[7,it] = np.nanmean(U_[:,MO],axis=1) # m/s
-        data_mean_MO[8,it] = np.nanmean(V_[:,MO],axis=1) # m/s
-        
-        dataT_mean_PL[0,it] = np.mean(PRS[PL])
-        dataT_mean_PL[1,it] = np.mean(BLH[PL])
-        dataT_mean_PL[2,it] = np.mean(THVBL[PL])
-        data_mean_PL[0,it] = np.nanmean(TH_[:,PL],axis=1) # K
-        data_mean_PL[1,it] = np.nanmean(RV_[:,PL],axis=1) # g/kg
-        data_mean_PL[2,it] = np.nanmean(THV_[:,PL],axis=1) # K
-        data_mean_PL[3,it] = np.nanmean( RC_[:,PL]>1e-6,axis=1) # cloud fraction
-        data_mean_PL[4,it] = np.nanmean(P_[:,PL],axis=1) # Pa
-        data_mean_PL[5,it] = np.nanmean(TR_[:,PL],axis=1)
-        data_mean_PL[6,it] = np.nanmean(W[:,PL],axis=1) # m/s
-        data_mean_PL[7,it] = np.nanmean(U_[:,PL],axis=1) # m/s
-        data_mean_PL[8,it] = np.nanmean(V_[:,PL],axis=1) # m/s
-    
-    print('Nanmeans :',str(round(time.time()-time0,1))+' s',end=' ') ; time0 = time.time()
-    
-    THVAS = surface_anomaly(THV[0],z,data_mean[2,it],ZS)
-    
-    name = savePathVideo+'maps_video/maps_video_{:02d}h{:02d}'.format(int(f.time.dt.hour),int(f.time.dt.minute))+simu+'.png'
-    if it == 0:
-        plot_Nmaps(ZS,U,V,THVAS,BLH,PRS,cloud_base_mask,WBL,UBLH,VBLH,name,legend=True)
-    else:
-        plot_Nmaps(ZS,U,V,THVAS,BLH,PRS,cloud_base_mask,WBL,UBLH,VBLH,name,legend=False)
-    img.append(name)
-    
-    print('Make and save maps :' ,str(round(time.time()-time0,1))+' s')
+        ds_dict["MO_flux_RHO"] = (("time", "zm"), data_flux_MO[0],{"units":"kg/s"})
+        ds_dict["MO_flux_RV"] = (("time", "zm"), data_flux_MO[1],{"units":"kg/s"})
+        ds_dict["MO_flux_RT"] = (("time", "zm"), data_flux_MO[2],{"units":"kg/s"})
+        ds_dict["MO_flux_TH"] = (("time", "zm"), data_flux_MO[3],{"units":"K/s"})
+            
+    ds = xr.Dataset( ds_dict,coords={"time": times,"zm":z,"z": Z,"y": y,"x": x},)
+    if not os.path.exists(savePathMean): os.makedirs(savePathMean) ; print('savePath directory created !')
+    save_name = savePathMean+simu+'_'+seg+'_mean.nc'
+    if os.path.exists(save_name): os.remove(save_name)
+    ds.to_netcdf(save_name, encoding={"time": {'units': 'days since 1900-01-01'}})
 
 #%%
-if orog:
-    ds = xr.Dataset(
-        {
-        "ZS": (("y", "x"), ZS),
-        "TH": (("time", "z"), data_mean[0]),
-        "RV": (("time", "z"), data_mean[1]),
-        "THV": (("time", "z"), data_mean[2]),
-        "CF": (("time", "z"), data_mean[3]),
-        "P": (("time", "z"), data_mean[4]),
-        "TR": (("time", "z"), data_mean[5]),
-        "W": (("time", "z"), data_mean[6]),
-        "U": (("time", "z"), data_mean[7]),
-        "V": (("time", "z"), data_mean[8]),
-        "PR": (("time",),dataT_mean[0]),
-        "BLH": (("time",),dataT_mean[1]),
-        "THVBL": (("time",),dataT_mean[2]),
-        
-        "MO": (("y", "x"), MO),
-        "TH_MO": (("time", "z"), data_mean_MO[0]),
-        "RV_MO": (("time", "z"), data_mean_MO[1]),
-        "THV_MO": (("time", "z"), data_mean_MO[2]),
-        "CF_MO": (("time", "z"), data_mean_MO[3]),
-        "P_MO": (("time", "z"), data_mean_MO[4]),
-        "TR_MO": (("time", "z"), data_mean_MO[5]),
-        "W_MO": (("time", "z"), data_mean_MO[6]),
-        "U_MO": (("time", "z"), data_mean_MO[7]),
-        "V_MO": (("time", "z"), data_mean_MO[8]),
-        "PR_MO": (("time",),dataT_mean_MO[0]),
-        "BLH_MO": (("time",),dataT_mean_MO[1]),
-        "THVBL_MO": (("time",),dataT_mean_MO[2]),
-        
-        "PL": (("y", "x"), PL),
-        "TH_PL": (("time", "z"), data_mean_PL[0]),
-        "RV_PL": (("time", "z"), data_mean_PL[1]),
-        "THV_PL": (("time", "z"), data_mean_PL[2]),
-        "CF_PL": (("time", "z"), data_mean_PL[3]),
-        "P_PL": (("time", "z"), data_mean_PL[4]),
-        "TR_PL": (("time", "z"), data_mean_PL[5]),
-        "W_PL": (("time", "z"), data_mean_PL[6]),
-        "U_PL": (("time", "z"), data_mean_PL[7]),
-        "V_PL": (("time", "z"), data_mean_PL[8]),
-        "PR_PL": (("time",),dataT_mean_PL[0]),
-        "BLH_PL": (("time",),dataT_mean_PL[1]),
-        "THVBL_PL": (("time",),dataT_mean_PL[2]),
-        
-        "MO_flux_RHO": (("time", "z"), data_flux_MO[0]),
-        "MO_flux_RV": (("time", "z"), data_flux_MO[1]),
-        "MO_flux_RT": (("time", "z"), data_flux_MO[2]),
-        "MO_flux_TH": (("time", "z"), data_flux_MO[3])
-        },
-        coords={"time": times,
-            "z": Z,
-            "y": y,
-            "x": x},
-    )
-else:
-    ds = xr.Dataset(
-        {
-        "ZS": (("y", "x"), ZS),
-        "TH": (("time", "z"), data_mean[0]),
-        "RV": (("time", "z"), data_mean[1]),
-        "THV": (("time", "z"), data_mean[2]),
-        "CF": (("time", "z"), data_mean[3]),
-        "P": (("time", "z"), data_mean[4]),
-        "TR": (("time", "z"), data_mean[5]),
-        "W": (("time", "z"), data_mean[6]),
-        "U": (("time", "z"), data_mean[7]),
-        "V": (("time", "z"), data_mean[8]),
-        "PR": (("time",),dataT_mean[0]),
-        "BLH": (("time",),dataT_mean[1]),
-        "THVBL": (("time",),dataT_mean[2])
-        },
-        coords={"time": times,
-            "z": Z,
-            "y": y,
-            "x": x},
-)
-
-if not os.path.exists(savePathMean): os.makedirs(savePathMean) ; print('savePath directory created !')
-ds.to_netcdf(savePathMean+simu+'_'+seg+'_mean.nc', encoding={"time": {'units': 'days since 1900-01-01'}})
-
-#%%
-from moviepy.editor import ImageSequenceClip
-
-# duration = 2
-# m0 = 60*12 + 0
-# m0 = 60*9 + 30
-# img = [savePathVideo+'maps_video/maps_video_{:02d}h{:02d}'.format((m0+m)//60,(m0+m)%60)+simu+'.png' for m in range(len(lFiles))]
-# img = [savePath+'maps_video/maps_video_{:03d}h'.format(h)+simu+'.png' for h in range(1,121)]
-
-# clips = [ImageClip(m).set_duration(2) for m in img]
-concat_clip = ImageSequenceClip(img,  fps=10)
-concat_clip.write_videofile(savePathVideo+'video_3maps_'+simu+'.mp4')
-
-#%%
-for var in ['rcloud','rprecip','w','thva']:#,'rtracer'
-    var_sparses = [ sparse.load_npz(savePathSkyView+var+'_sparse_'+simu+'_'+str(it)+'.npz' ) for it in range(nt) ]
-    var_sparse = sparse.concatenate( var_sparses ,axis=0)
-    sparse.save_npz(savePathSkyView+var+'_sparse_'+simu ,var_sparse)  
-    print(var,end=' ')
-    emptyness(var_sparse)
+plt.close("all")
+if make_maps:
+    from moviepy.editor import ImageSequenceClip
     
-    for it in range(nt):
-        os.remove(savePathSkyView+var+'_sparse_'+simu+'_'+str(it)+'.npz' )
+    # duration = 2
+    # m0 = 60*12 + 0
+    # m0 = 60*9 + 30
+    # img = [savePathFigures+'maps_video/maps_video_{:02d}h{:02d}'.format((m0+m)//60,(m0+m)%60)+simu+'.png' for m in range(len(lFiles))]
+    # img = [savePath+'maps_video/maps_video_{:03d}h'.format(h)+simu+'.png' for h in range(1,121)]
+    
+    # clips = [ImageClip(m).set_duration(2) for m in img]
+    
+    for i,img_maps in enumerate(img_maps_list):
+        concat_clip = ImageSequenceClip(img_maps,  fps=5)
+        if img_maps_names[i][:3]=='gif':
+            concat_clip.resize(0.5).write_gif(savePathFigures+img_maps_names[i]+'_'+simu+'.gif', program='ffmpeg')
+        concat_clip.write_videofile(savePathFigures+img_maps_names[i]+'_'+simu+'.mp4')
+
+#%%
+if make_sparses:
+    for var in ['rcloud','rprecip','w','thva']:#,'rtracer'
+        var_sparses = [ sparse.load_npz(savePathSkyView+var+'_sparse_'+simu+'_'+str(it)+'.npz' ) for it in range(nt) ]
+        var_sparse = sparse.concatenate( var_sparses ,axis=0)
+        sparse.save_npz(savePathSkyView+var+'_sparse_'+simu ,var_sparse)  
+        print(var,end=' ')
+        emptyness(var_sparse)
+        
+        for it in range(nt):
+            os.remove(savePathSkyView+var+'_sparse_'+simu+'_'+str(it)+'.npz' )
     
 #%%
 # import matplotlib.pyplot as plt
 # fig,axs = plt.subplots(ncols=5)
 # for it,tt in enumerate(times):
-#     axs[0].plot(data_mean[0,it],Z,label=tt)
-#     axs[1].plot(data_mean[1,it],Z,label=tt)
-#     axs[2].plot(data_mean[2,it],Z,label=tt)
-#     axs[3].plot(data_mean[3,it],Z,label=tt)
+#     axs[0].plot(data3D_mean[0,it],Z,label=tt)
+#     axs[1].plot(data3D_mean[1,it],Z,label=tt)
+#     axs[2].plot(data3D_mean[2,it],Z,label=tt)
+#     axs[3].plot(data3D_mean[3,it],Z,label=tt)
 # axs[4].plot(timeH,precip_mean)
 # axs[0].legend()
 
@@ -798,8 +883,8 @@ for var in ['rcloud','rprecip','w','thva']:#,'rtracer'
 #             axs[i].plot(data_profile[i,it],z,label=tt)
 #     axs[0].legend()
     
-# plot_profiles(z,data_mean_MO)
-# plot_profiles(z,data_mean_PL)
+# plot_profiles(z,data3D_mean_MO)
+# plot_profiles(z,data3D_mean_PL)
 # plot_profiles(z,data_flux_MO)
 
 #%%
@@ -811,7 +896,7 @@ for var in ['rcloud','rprecip','w','thva']:#,'rtracer'
 # fig,ax = plt.subplots()
 # ax2 = ax.twiny()
 # for it,tt in enumerate(times):
-#     ax.plot(data_mean_MO[2,it]-data_mean_PL[2,it] , z)
+#     ax.plot(data3D_mean_MO[2,it]-data3D_mean_PL[2,it] , z)
 #     ax2.plot(data_flux_MO[0,it] , ZSmean + (1-ZSmean/z[-1]) * z)
     
 #%%

@@ -8,25 +8,28 @@ Created on Mon Oct 23 16:10:21 2023
 import matplotlib.pyplot as plt
 import numpy as np
 
-dx = 100
-ZTOP = 5_500
+dz0 = 4
 
-dzBL = 50
-# ZBL = 3500
-ZBL = ZTOP
+dx = 600
+ZTOP = 20_000
 
-# ZEPONGE = 16_500
+dzBL = 200
+ZBL = 5000
+# ZBL = ZTOP
+
+# ZEPONGE = 16_000
 # ZEPONGE = ZBL
 ZEPONGE = ZTOP
 
-z = 0.
-dz = 10.
-stretching = 1.15 # increase of dz by 20% 
 
-list_z = []
+stretching = 1.1 # increase of dz by 20% 
+
+z = 0.
+dz = dz0
+list_z = [z]
 while z < ZTOP:
-    list_z.append(z)
     z += dz
+    list_z.append(z)
     if z<ZBL:
         if dz<dzBL:
             dz = min(dzBL,dz*stretching)
@@ -41,12 +44,13 @@ list_dz = list_z[1:]-list_z[:-1]
 plt.plot(np.arange(nz),list_z )
 plt.plot(list_dz,list_z[1:])
 
+print('NKMAX='+str(nz-1))
 #%%
 #list_z = np.linspace(0,20000,201)
-print('NKMAX='+str(nz-1))
-with open('ZHAT'+str(dx)+'.txt','w') as f:
+savePath = '/home/philippotn/Documents/PhD/ZHAT_txt/'
+with open(savePath+'ZHAT'+'_'+str(dz0)+'_'+str(round((stretching-1)*100))+'%_'+str(dzBL)+'_'+str(ZBL)+'_'+str(dx)+'_'+str(ZTOP)+'.txt','w') as f:
     f.write('NKMAX='+str(nz-1)+'\n')
     f.write('ZHAT\n')
     for z in list_z:
-        f.write("{:.1f}\n".format(z))
-        print("{:.1f}".format(z),end=" ")
+        f.write("{:.3f}\n".format(z))
+        print("{:.3f}".format(z),end=" ")
