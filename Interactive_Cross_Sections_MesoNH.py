@@ -33,7 +33,7 @@ floatype = np.float16
 # simu = 'BOMEX' ; Zmax = 16000
 
 # simu = 'ABL0V' ; Zmax = 16000
-simu = 'AMOPL' ; Zmax = 16000
+# simu = 'AMOPL' ; Zmax = 16000
 # simu = 'A0W0V' ; Zmax = 16000
 # simu = 'ATRI2' ; Zmax = 16000
 # simu = 'ACON2' ; Zmax = 16000
@@ -46,7 +46,7 @@ simu = 'AMOPL' ; Zmax = 16000
 # simu = 'DF500' ; Zmax = 5000
 # simu = 'DTRI2' ; Zmax = 5000
 # simu = 'DMO10' ; Zmax = 5000
-# simu = 'DMOPL' ; Zmax = 5000
+simu = 'DMOPL' ; Zmax = 5000
 
 # simu = 'E600M' ; Zmax = 10000
 # simu = 'E620M' ; Zmax = 15000
@@ -105,7 +105,7 @@ elif simu== 'CMO10':
     
 elif simu in ['DFLAT','DF500','DTRI2','DMO10','DMOPL']:
     # seg = 'M100m' ; lFiles = [dataPath + simu+'.1.'+seg+'.OUT.{:04d}.nc'.format(i) for i in range(6,109,12)]
-    seg = 'M100m' ; lFiles = [dataPath + simu+'.1.'+seg+'.OUT.{:04d}.nc'.format(i) for i in range(48,69,12)]
+    seg = 'M100m' ; lFiles = [dataPath + simu+'.1.'+seg+'.OUT.{:04d}.nc'.format(i) for i in range(6,85,24)]
     
 # LES canicule alpes
 elif simu=='E600M':

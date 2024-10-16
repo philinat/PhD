@@ -32,11 +32,11 @@ floatype = np.float64
 intype = np.int32
 
 make_charac = False
-make_maps = True ; img_maps_names = ['gif_BLH','gif_WBL','gif_THVA2m'] # img_maps_names = ['video_3maps_BL','video_3maps_SL']
+make_maps = False ; img_maps_names = ['gif_BLH','gif_WBL','gif_THVA2m'] # img_maps_names = ['video_3maps_BL','video_3maps_SL']
 make_hist2D = False
 make_sparses = False
-make_hori_mean = False
-use_thermals = False
+make_hori_mean = True
+# use_thermals = True
 
 orog = True
 dates = False
@@ -104,8 +104,8 @@ elif simu== 'CMO10':
     seg = 'M100m' ; lFiles = [dataPath + simu+'.1.'+seg+'.OUT.{:03d}.nc'.format(i) for i in range(2,3,1)]
 
 elif simu in ['DFLAT','DF500','DTRI2','DMO10','DMOPL']:
-    # seg = 'M100m' ; lFiles = [dataPath + simu+'.1.'+seg+'.OUT.{:04d}.nc'.format(i) for i in range(6,109,6)]
-    seg = 'M100m' ; lFiles = [dataPath + simu+'.1.'+seg+'.OUT.{:04d}.nc'.format(i) for i in range(6,85,6)] # only day
+    seg = 'M100m' ; lFiles = [dataPath + simu+'.1.'+seg+'.OUT.{:04d}.nc'.format(i) for i in range(6,109,6)]
+    # seg = 'M100m' ; lFiles = [dataPath + simu+'.1.'+seg+'.OUT.{:04d}.nc'.format(i) for i in range(84,85,6)] # only day
     
 elif simu=='E600M':
     # seg = '19AUG'; lFiles = [dataPath + simu+'.1.'+seg+'.OUT.{:04d}.nc'.format(i) for i in range(6,7,1)]
@@ -329,18 +329,33 @@ if make_maps:
     px,py = np.meshgrid(x[::nx//nstarts]/1000,y[::ny//nstarts]/1000)
     start_points = np.transpose(np.array([px.flatten(),py.flatten()]))
 
+def is_thermal_TR_W(TR,W):
+    TR_std = np.std(TR,axis=(1,2))
+    TR_mean = np.mean(TR,axis=(1,2))
+    TR_stdmin = 0.5/(z+dz/2) * np.cumsum(dz*TR_std) # 0.05
+    TR_threshold = TR_mean+np.maximum(TR_std,TR_stdmin)
+    return np.logical_and( TR>TR_threshold.reshape(nz,1,1) , W>0 )
+
+def is_thermal_TR_W_THVBL(TR,W,THV,THVBL):
+    TR_std = np.std(TR,axis=(1,2))
+    TR_mean = np.mean(TR,axis=(1,2))
+    # TR_stdmin = 0.5/(z+dz/2) * np.cumsum(dz*TR_std) # 0.05
+    TR_stdmin = 0.
+    TR_threshold = TR_mean+np.maximum(TR_std,TR_stdmin)
+    return np.logical_and( np.logical_and( TR>TR_threshold.reshape(nz,1,1) , W>0)  , THV< THVBL.reshape((1,ny,nx))+0.5 )
+
+def is_thermal_TR_W_agl(TR,W,ZS,z):
+    agl = z.reshape(nz,1,1) * dz_shrink.reshape(1,ny,nx)
+    groundTR = np.mean(TR[0])# + np.std(TR[0])
+    return np.logical_and( TR> groundTR/(10-9*np.exp(-agl/200))*np.exp(-agl/2000), W>0)
+
 from identification_methods import identify
 listVarNames = ['SVT001','WT']#[]#
 def thermalMask(dictVars):
     TR = dictVars['SVT001'][0,nz1:nz2,ny1:ny2,nx1:nx2]
     W = dictVars['WT'][0,nz1:nz2,ny1:ny2,nx1:nx2]
-    TR_std = np.std(TR,axis=(1,2))
-    TR_mean = np.mean(TR,axis=(1,2))
-    TR_stdmin = 0.5/(z+dz/2) * np.cumsum(dz*TR_std) # 0.05
-    TR_threshold = TR_mean+np.maximum(TR_std,TR_stdmin)
-    
     mask = np.zeros((1,nz+2,ny+2,nx+2),dtype='bool')
-    mask[0,nz1:nz2,ny1:ny2,nx1:nx2] = np.logical_and( TR>TR_threshold.reshape(nz,1,1) , W>0 )
+    mask[0,nz1:nz2,ny1:ny2,nx1:nx2] = is_thermal_TR_W(TR,W)
     mask[0,:,0,:] = mask[0,:,-2,:]
     mask[0,:,-1,:] = mask[0,:,1,:]
     mask[0,:,:,0] = mask[0,:,:,-2]
@@ -401,27 +416,28 @@ def plot_maps(fig_maps,axs_maps,text_title,ZS,maps_VAR,maps_params, PRS,MASK ,U,
             # for il,arrows in enumerate(streamp.arrows):
             #     if max(streamp.lines[il].linewidths) < 1: arrows[il].remove()
     if legend:
-        cax=fig_maps.add_axes([2/Nmaps-0.1,0.08, 0.2, 0.03])
-        cax.set_xlim([0.5,4.5])
-        cax.set_ylim([0.,2.])
-        cax.set_yticks([])
-        cax.set_xticks([1,2,3,4])
-        cax.set_xticklabels(['0.1','1','10','100'],size=ft*2/3)
-        # cax.xticks.label.set_fontsize(2/3*ft) 
-        cax.scatter([1,2,3,4],[1,1,1,1],s=0.5*np.array([0.1,1,10,100]), c='black')
-        cax.set_xlabel('mm / min',fontsize=ft)
-        cax.set_title('Rain at the surface',fontsize=ft)
-        
-        cax=fig_maps.add_axes([1/Nmaps-0.1,0.08, 0.2, 0.03])
-        cax.set_xlim([0.5,4.5])
-        cax.set_ylim([0.,2.])
-        cax.set_yticks([])
-        cax.set_xticks([1,2,3,4])
-        cax.set_xticklabels(['1','5','10','20',],size=ft*2/3)
-        US,VS = np.array([[1,5,10,20],[1,5,10,20],[1,5,10,20]]) , np.zeros((3,4))
-        cax.streamplot(np.arange(1,5),np.arange(3),US,VS, density=3, color='k', linewidth=3/10*np.sqrt(US**2+VS**2) , arrowsize = 0.5,start_points=np.array([[2.5,1.]]) )
-        cax.set_xlabel('m/s',fontsize=ft)
-        cax.set_title('Wind speed',fontsize=ft)
+        if maps_params[i][8]:
+            cax=fig_maps.add_axes([2/Nmaps-0.1,0.08, 0.2, 0.03])
+            cax.set_xlim([0.5,4.5])
+            cax.set_ylim([0.,2.])
+            cax.set_yticks([])
+            cax.set_xticks([1,2,3,4])
+            cax.set_xticklabels(['0.1','1','10','100'],size=ft*2/3)
+            # cax.xticks.label.set_fontsize(2/3*ft) 
+            cax.scatter([1,2,3,4],[1,1,1,1],s=0.5*np.array([0.1,1,10,100]), c='black')
+            cax.set_xlabel('mm / min',fontsize=ft)
+            cax.set_title('Rain at the surface',fontsize=ft)
+        if maps_params[i][10] is not None:
+            cax=fig_maps.add_axes([1/Nmaps-0.1,0.08, 0.2, 0.03])
+            cax.set_xlim([0.5,4.5])
+            cax.set_ylim([0.,2.])
+            cax.set_yticks([])
+            cax.set_xticks([1,2,3,4])
+            cax.set_xticklabels(['1','5','10','20',],size=ft*2/3)
+            US,VS = np.array([[1,5,10,20],[1,5,10,20],[1,5,10,20]]) , np.zeros((3,4))
+            cax.streamplot(np.arange(1,5),np.arange(3),US,VS, density=3, color='k', linewidth=3/10*np.sqrt(US**2+VS**2) , arrowsize = 0.5,start_points=np.array([[2.5,1.]]) )
+            cax.set_xlabel('m/s',fontsize=ft)
+            cax.set_title('Wind speed',fontsize=ft)
         
     date = str(f.time.data[0])[:10]
     hour = '{:02d} h {:02d}'.format(int(f.time.dt.hour),int(f.time.dt.minute))
@@ -583,35 +599,36 @@ def plot_hist2D(z,W,TH,TKE,surflay,thermals,ft=15): #RV, RC , RP , RT
     return name
     
 #%%
-VAR3D_2mean_names = ['ALPHA','RHO','TH','RV','THV','CF','P','TR','W','U','V','TKE','WTH']
-VAR3D_2mean_units = ['','kg/m3','K','kg/kg','K','','Pa','kg/kg','m/s','m/s','m/s','m²/s²','m/sK']
-VAR2D_2mean_names = ['H','LE','TSE','TPW','PRS','BLH','THVBL']
-VAR2D_2mean_units = ['W/m²','W/m²','J/m²','kg/m²','mm/s','m','K']
-nvar2D = 7
-nvar3D = 13 # 14
-nflux = 4
-
-regions = [] ; region_types = [] ; region_names = []
-regions.append(np.ones((ny,nx),dtype=np.bool_))    ; region_types.append('2D') ; region_names.append('a')
-regions.append(np.ones((ny,nx),dtype=np.bool_))    ; region_types.append('3D') ; region_names.append('s')
-regions.append(np.ones((nZ,ny,nx),dtype=np.bool_)) ; region_types.append('3D') ; region_names.append('t')
-regions.append(np.ones((nZ,ny,nx),dtype=np.bool_)) ; region_types.append('3D') ; region_names.append('e')
-if orog:
-    regions.append(MO) ; region_types.append('2D') ; region_names.append('MO')
-    regions.append(PL) ; region_types.append('2D') ; region_names.append('PL')
-    dzrange = 250
-    for zrange in range(0,int(ZS.max()),dzrange):
-        reg3D = np.zeros((nZ,ny,nx),dtype=np.bool_)
-        reg2D = np.logical_and( ZS>= zrange , ZS<zrange+dzrange )
-        reg3D[:,reg2D] = True
-        regions.append(reg3D) ; region_types.append('3D') ; region_names.append('t_'+str(zrange))
-
-nreg = len(regions)         
-# timeH = np.zeros(nt)
-
-data3D_mean = np.full((nreg,nvar3D,nt,nZ),np.nan,dtype=floatype)
-data2D_mean = np.zeros((nreg,nvar2D,nt),dtype=floatype)
-if orog: data_flux_MO = np.full((nflux,nt,nz),np.nan,dtype=floatype)
+if make_hori_mean:
+    VAR3D_2mean_names = ['ALPHA','RHO','TH','RV','THV','CF','P','TR','W','U','V','TKE','WTH']
+    VAR3D_2mean_units = ['','kg/m3','K','kg/kg','K','','Pa','kg/kg','m/s','m/s','m/s','m²/s²','m/sK']
+    VAR2D_2mean_names = ['H','LE','TSE','TPW','PRS','BLH','THVBL']
+    VAR2D_2mean_units = ['W/m²','W/m²','J/m²','kg/m²','mm/s','m','K']
+    nvar2D = 7
+    nvar3D = 13 # 14
+    nflux = 4
+    
+    regions = [] ; region_types = [] ; region_names = []
+    regions.append(np.ones((ny,nx),dtype=np.bool_))    ; region_types.append('2D') ; region_names.append('a')
+    regions.append(np.ones((ny,nx),dtype=np.bool_))    ; region_types.append('3D') ; region_names.append('s')
+    regions.append(np.ones((nZ,ny,nx),dtype=np.bool_)) ; region_types.append('3D') ; region_names.append('t')
+    regions.append(np.ones((nZ,ny,nx),dtype=np.bool_)) ; region_types.append('3D') ; region_names.append('e')
+    if orog:
+        regions.append(MO) ; region_types.append('2D') ; region_names.append('MO')
+        regions.append(PL) ; region_types.append('2D') ; region_names.append('PL')
+        dzrange = 250
+        for zrange in range(0,int(ZS.max()),dzrange):
+            reg3D = np.zeros((nZ,ny,nx),dtype=np.bool_)
+            reg2D = np.logical_and( ZS>= zrange , ZS<zrange+dzrange )
+            reg3D[:,reg2D] = True
+            regions.append(reg3D) ; region_types.append('3D') ; region_names.append('t_'+str(zrange))
+    
+    nreg = len(regions)         
+    # timeH = np.zeros(nt)
+    
+    data3D_mean = np.full((nreg,nvar3D,nt,nZ),np.nan,dtype=floatype)
+    data2D_mean = np.zeros((nreg,nvar2D,nt),dtype=floatype)
+    if orog: data_flux_MO = np.full((nflux,nt,nz),np.nan,dtype=floatype)
 
 #%%
 times = f0.time.data
@@ -663,16 +680,23 @@ for it,fname in enumerate(lFiles):
     LE = npf2D('DUMMY2D2') * Lv * RHO[0]
     CONV = horizontal_convergence(U,V,dx)
     
-    if 'SVT001' in var_names and use_thermals:
+    thermals = np.zeros((nz2-nz1,ny,nx),dtype=np.int32)
+    BLH,CBM,TTM,THVBL,WBL,UBL,VBL,UBLH,VBLH = boundary_layer_diags(Zm,ZS,RC,THV,RHO,W,U,V,thermals)
+    SLD,TBM,THVSL,WSL,USL,VSL = surface_layer_diags(Zm,ZS,THV,RHO,W,U,V,thermals)
+    
+    if 'SVT001' in var_names and make_charac:
         thermals,_ = identify(fname, listVarNames, thermalMask, name="tracer_updraft",delete=10,write=False,rename=False)
         thermals = np.array(thermals[0,nz1:nz2,ny1:ny2,nx1:nx2],dtype=np.int32)
         change_label(thermals)
         print(' Thermals:',str(round(time.time()-time0,1))+' s',end=' ') ; time0 = time.time()
-    else:
-        thermals = np.zeros((nz2-nz1,ny,nx),dtype=np.int32)
+    elif 'SVT001' in var_names:
+        # thermals = is_thermal_TR_W(TR,W)
+        # thermals = is_thermal_TR_W_THVBL(TR,W,THV,THVBL)
+        thermals = is_thermal_TR_W_agl(TR,W,ZS,z)
+    # else:
+    #     thermals = np.zeros((nz2-nz1,ny,nx),dtype=np.int32)
         
-    BLH,CBM,TTM,THVBL,WBL,UBL,VBL,UBLH,VBLH = boundary_layer_diags(Zm,ZS,RC,THV,RHO,W,U,V,thermals)
-    SLD,TBM,THVSL,WSL,USL,VSL = surface_layer_diags(Zm,ZS,THV,RHO,W,U,V,thermals)
+    SLD = 20. * np.ones_like(SLD)
     SL = AL_SL(Z,ZS,SLD)
 
     TSE = dz_shrink * np.sum( dz.reshape(nz,1,1)*RHO*Cp*TH , axis=0) # total sensible energy # J/m^2
@@ -796,7 +820,7 @@ for it,fname in enumerate(lFiles):
                 AGL = 2.
                 AL = Zm[Zm<np.max(ZS)+1.1*np.max(dz)]
                 maps_VAR = [AGL_lin_anomaly( AGL_lin_interp(THV,AGL,Zm,ZS) ,AGL,AL,np.nanmean(AL_lin_interp(THV,AL,Zm,ZS),axis=(1,2)) ,ZS )]
-                maps_params = [[-4,4,'RdBu_r','both','%.1f',None,"Surface buoyancy $\\theta _v ^{\prime}$ at 2m AGL",' K',False,None,None]]
+                maps_params = [[-4,4,'RdBu_r','both','%.1f',None,"Buoyancy $\\theta _v ^{\prime}$ at 2m",' K',False,None,None]]
                 img_maps_list[i].append( plot_maps(fig_maps_list[i],axs_maps_list[i],text_title_list[i],ZS,maps_VAR,maps_params, PRS,TTM,UBL,VBL,legend=False,short_title=True ,ZS_labels=False,map_name='THVA2m') )
         
         print('Make and save maps :' ,str(round(time.time()-time0,1))+' s',end=' ') ; time0 = time.time()

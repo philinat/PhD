@@ -354,14 +354,17 @@ def MFs_katabatic(z,dz,TH,TH_,RHO,RHO_,zi,Wstar,H,alpha,alpha_,adot,adot_,phi,ph
     return FTH*Cp ,THt,Wt,At,Ft,Et,-Dt ,THs,Ws,As,Fs,Es,-Ds
 
 @njit()
-def MFst(z,dz,TH,TH_,RHO,RHO_,zi,Wstar,H,alpha,alpha_,adot,adot_,phi,phi_,gamma):
+def MFst(z,dz,ztg,TH,TH_,RHO,RHO_,H,alpha,alpha_,adot,adot_,phi,phi_,gamma):
     nz, = z.shape
-    THs,Ws = [ np.full(nz+1,np.nan) for i in range(2) ]
+    ng = len(ztg)
+    THs,Ws,Wstar = [ np.full(nz+1,np.nan) for i in range(3) ]
     FTH, THt,Wt,At,Ft ,As,Fs = [ np.zeros(nz+1) for i in range(7) ]
+    THtg,Wtg,Atg,Ftg = [ np.zeros((ng,nz+1)) for i in range(4) ]
     Et,Dt ,Es,Ds = [ np.zeros(nz) for i in range(4) ]
     
     # Constantes de la param
     a = 0.85 # Coefficient de réduction de flottabilité
+    Cm = 0.1 # constante ED pour le momentum Km = Cm lm sqrt(k)
     Cw0 = 0.2
     At0 = 0.15 # EDKF At0*Cw0 = 0.065
     D0 = 0.0006
@@ -370,7 +373,7 @@ def MFst(z,dz,TH,TH_,RHO,RHO_,zi,Wstar,H,alpha,alpha_,adot,adot_,phi,phi_,gamma)
     pat = (CD/a-1)/2
     b = 5e-4#0.5/zi # (m-1)
     D = 20. # depth of surface layer (m)
-    Cd = 0.005 # drag coefficient # sans dimension # wikipedia for flat plate with Re>10e6
+    Cd = 0.005 # drag coefficient # sans dimension # wikipedia for flat plate with Re>10e6 : Cd = 0.005
     explicite = True
     ############## Partie Couche de surface 
     # # Dadot = 1/adot ; Dadot[0]*=adot[0]/z[0] ; Dadot[1:]*=(adot[1:]-adot[:-1])/(z[1:]-z[:-1])
@@ -394,6 +397,7 @@ def MFst(z,dz,TH,TH_,RHO,RHO_,zi,Wstar,H,alpha,alpha_,adot,adot_,phi,phi_,gamma)
     # # plt.plot(Drag,z,label='$\\frac{C_d}{D\sin\\phi}$')
     # # plt.legend()
     
+    ig=0
     iz=0
     while adot[iz] == 0: 
         iz+=1
@@ -427,37 +431,53 @@ def MFst(z,dz,TH,TH_,RHO,RHO_,zi,Wstar,H,alpha,alpha_,adot,adot_,phi,phi_,gamma)
         # Fs[iz+1] = Fs[iz]*(1+dz[iz]*(Es[iz]-Ds[iz])) # Version explicite
         # Fs[iz+1] = Fs[iz]*exp(dz[iz]*(Es[iz]-Ds[iz])) # Version exponentielle
         
-        Wstar =  ( g/THe * H/RHO_[iz]/Cp * max(0.,zi-z[iz]) )**(1/3)
-        # Wstar =  max(D,zi-z[iz])/1000
-        wt = Ws[iz] + Cw0*Wstar*dz[iz]/2/D   #### <---- initialisation thermique
-        # Wt[iz] = wt
-        Dsp = RHO_[iz]*dalpha[iz]*At0*wt # 
+        ## Calcul de la hauteur entre la couche de surface et là où le profil moyen est de température potentielle égale --> wstar
+        if THs[iz]>TH[iz]: # wstar>0 seulement si la couche de surface est instable
+            izwstar = iz
+            while THs[iz]>TH[izwstar+1]:
+                izwstar+=1
+            hstar = ( z[izwstar+1]*(THs[iz]-TH[izwstar]) + z[izwstar]*(TH[izwstar+1]-THs[iz]) ) / (TH[izwstar+1]-TH[izwstar]) - z[iz]
+            Wstar[iz] =  ( g/THe * H/RHO[iz]/Cp * hstar )**(1/3)
+        else:
+            hstar = 0.
+            Wstar[iz] = 0.
+        Dsp = RHO[iz]*dalpha[iz]*At0*Cw0*Wstar[iz] # Détrainement SPontané par instabilité 
+        
         d_rho_as = As[iz+1]*RHO_[iz+1]-As[iz]*RHO_[iz]
-        # Es[iz] = dz[iz]*Fs[iz]*Bs/2/Ws2 + Ws[iz]*max(0, d_rho_as)/2 + Dsp/2
+        Es[iz] = dz[iz]*Fs[iz]*Bs/2/Ws2 + Ws[iz]*max(0, d_rho_as)/2 + Dsp/2
         Ds[iz] = dz[iz]*Fs[iz]*Drag[iz] + Ws[iz]*max(0,-d_rho_as)   + Dsp
-        ft = Ds[iz] #### <---- initialisation thermique
+        
+        
         
         #### Old calcul de Ws2
         # Ws2 = (Ws2 + dz[iz]*Bs) / (1+2*dz[iz]*(Eadot[iz]+Ephi[iz]+Drag[iz])) # Version implicite
         # Ws2 += 2*dz[iz]* ( Bs -(Es[iz]+Drag[iz])*Ws2 ) # Version explicite
         #### Ws2 implicite
-        Ws2 = (Ws2 + dz[iz]*Bs) / (1 + dz[iz]*2*Drag[iz] + Dsp/Fs[iz]+ max(0, As[iz+1]-As[iz])/(As[iz]+As[iz+1])*2 ) #/As[iz]) # Version implicite   
-        Ws[iz+1] = sqrt(Ws2)
-        Fs[iz+1] = As[iz+1]*Ws[iz+1]*RHO_[iz+1]
-        Es[iz] = Fs[iz+1] - Fs[iz] + Ds[iz]
+        # Ws2 = (Ws2 + dz[iz]*Bs) / (1 + dz[iz]*2*Drag[iz] + Dsp/Fs[iz]+ max(0, As[iz+1]-As[iz])/(As[iz]+As[iz+1])*2 ) #/As[iz]) # Version implicite   
+        # Ws[iz+1] = sqrt(Ws2)
+        # Fs[iz+1] = As[iz+1]*Ws[iz+1]*RHO_[iz+1]
+        # Es[iz] = Fs[iz+1] - Fs[iz] + Ds[iz]
         # Ds[iz] = -Fs[iz+1] + Fs[iz] + Es[iz]
         #### Ws à partir de Es et Ds et l'équation du flux
-        # Fs[iz+1] = Fs[iz] + Es[iz] - Ds[iz]
-        # Ws[iz+1] = Fs[iz+1]/As[iz+1]/RHO_[iz+1]
+        Fs[iz+1] = Fs[iz] + Es[iz] - Ds[iz]
+        if Fs[iz+1]<0:
+            Fs[iz+1] = 0.
+            Es[iz] = Ds[iz] - Fs[iz]
+        else:
+            Ws[iz+1] = Fs[iz+1]/As[iz+1]/RHO_[iz+1]
+        
         
         
         # G = min(1. , 0.1*dz[iz]/D * Fs[iz]*THs[iz] / (dalpha[iz]*H/Cp) )
         # G = min(1. , Fs[iz]  / ( Fs[iz]+Es[iz] ) )
         # G = 0. if alpha_[iz]==0. else 1.
-        G = 1-exp(-5*phi[iz])
+        # G = 1-exp(-5*phi[iz])
         # G = (sin(phi[iz]))**(0.2)
         # G = min(1.,exp(-Bs/10/sin(phi[iz])))
         # (K*Wstar*D)**2*sin(phi[iz]) / Bs/D**3
+        gradient = (TH[iz+1]-TH[iz]) / (z[iz+1]-z[iz])
+        G = 1. if gradient>=0 else max(0. , 1- RHO[iz]*Cp/H * sqrt( (-Cm*D*gradient)**3 * g/TH[iz] * sqrt(2*D*hstar)) ) # flux ED via une tke diagnostique
+        
         THs[iz+1] = ( Fs[iz]*THs[iz] + Es[iz]*THe + dalpha[iz]*H/Cp*G ) / ( Fs[iz]+Es[iz] ) # Fs[iz+1]+Ds[iz] == Fs[iz]+Es[iz]
         
         # THs[iz+1] = THs[iz] + dz[iz]* ( Es[iz]*(THe-THs[iz]) + H*cos(phi[iz])/RHO[iz]/Cp/D/(Ws[iz]+Ws[iz+1])*2) # Version de base
@@ -467,11 +487,19 @@ def MFst(z,dz,TH,TH_,RHO,RHO_,zi,Wstar,H,alpha,alpha_,adot,adot_,phi,phi_,gamma)
         FTH[iz+1] += Fs[iz+1] * (THs[iz+1]-TH_[iz+1])
         
         
+        ft = Ds[iz] #### <---- initialisation thermique
+        # wt = Ws[iz] + Cw0*Wstar[iz]*dz[iz]/2/D   #### <---- initialisation thermique
+        
+        # Moyenne pondérée des vitesses de détrainement respectant le flux total Ds[iz]
+        A = RHO_[iz]*As[iz]*dz[iz]*Drag[iz] + max(0,-d_rho_as)
+        B = RHO[iz]*dalpha[iz]*At0*Cw0*Wstar[iz] / (Ws[iz] + Cw0*Wstar[iz])
+        wt = (A*Ws[iz] + B*(Ws[iz]+Cw0*Wstar[iz]) )/(A+B)
+        
         iz+=1
-     
-    
-    
         ################# partie Thermique
+        while ig+1<ng and z_[iz]>ztg[ig+1]:
+            ig+=1
+    
         tht = THs[iz]
         wt2 = wt**2 
         at = ft/RHO_[iz]/wt
@@ -479,10 +507,16 @@ def MFst(z,dz,TH,TH_,RHO,RHO_,zi,Wstar,H,alpha,alpha_,adot,adot_,phi,phi_,gamma)
     
         jz = iz
         while jz < nz: # boucle pour le thermique jusqu'en haut
+            Atg[ig,jz] += at
+            Wtg[ig,jz] += at*wt
+            THtg[ig,jz] += at*tht
+            Ftg[ig,jz] += ft
+            
             At[jz] += at
             Wt[jz] += at*wt
             THt[jz] += at*tht
             Ft[jz] += ft
+            
             FTH[jz] += ft * (tht-TH_[jz])
                 
             THe = TH[jz]  # Approximation de la surface négligeable
@@ -538,6 +572,9 @@ def MFst(z,dz,TH,TH_,RHO,RHO_,zi,Wstar,H,alpha,alpha_,adot,adot_,phi,phi_,gamma)
                     break
             jz += 1
     
+    for jz in range(iz,nz):
+        Wstar[jz] = Wstar[iz]
+        
     for iz in range(nz):
         if At[iz]>0:
             Wt[iz] /= At[iz]
@@ -545,7 +582,15 @@ def MFst(z,dz,TH,TH_,RHO,RHO_,zi,Wstar,H,alpha,alpha_,adot,adot_,phi,phi_,gamma)
         else:
             Wt[iz] = np.nan
             THt[iz] = np.nan
-    return FTH ,THt,Wt,At,Ft,Et,-Dt ,THs,Ws,As,Fs,Es,-Ds
+        for ig in range(ng):
+            if Atg[ig,iz]>0:
+                Wtg[ig,iz] /= Atg[ig,iz]
+                THtg[ig,iz] /= Atg[ig,iz]
+            else:
+                Wtg[ig,iz] = np.nan
+                THtg[ig,iz] = np.nan
+                
+    return FTH,Wstar ,THt,Wt,At,Ft,Et,-Dt ,THs,Ws,As,Fs,Es,-Ds ,THtg,Wtg,Atg,Ftg
 
 @njit()
 def get_dalpha_phi_gamma(ZS,z_,dx,cyclic=True):
@@ -592,7 +637,7 @@ LES = True
 
 if LES:
     # simu = 'E620M' ; seg = '200m' ; zmax = 6000.
-    simu = 'DMOPL' ; seg = 'M100m' ; zmax = 4000.
+    simu = 'DMO10' ; seg = 'M100m' ; zmax = 4000.
     userPath = '/home/philippotn'
     if simu[0] in ['A','C']: dataPath = userPath+'/Documents/SIMU_LES/'
     elif simu[0] in ['D']: dataPath = userPath+'/Documents/NO_SAVE/'
@@ -621,10 +666,12 @@ if LES:
     alpha = (alpha_[1:]+alpha_[:-1])/2
     # phi[np.isnan(phi)] = 0.
     thermal_groups = []
-    # for var in f.data_vars:
-    #     if var[:4] == 'W_t_' : thermal_groups.append(int(var[4:]))
+    for var in f.data_vars:
+        if var[:4] == 'W_t_' : thermal_groups.append(int(var[4:]))
+    ng = len(thermal_groups)
+    ztg = np.array([float(group) for group in thermal_groups])
     cmap_thermal_groups = matplotlib.colormaps.get_cmap('autumn_r')
-    color_thermal_groups = cmap_thermal_groups(np.linspace(0,1,len(thermal_groups)))
+    color_thermal_groups = cmap_thermal_groups(np.linspace(0,1,ng))
     
     adot = dalpha/dz # alpha dot
     adot_ = compute_(adot)
@@ -662,6 +709,7 @@ data_EDF = np.zeros((nt,nz+1))
 data_MFF = np.zeros((nt,nz+1))
 data_THt = np.zeros((nt,nz+1))
 data_THs = np.zeros((nt,nz+1))
+data_Wstar = np.zeros((nt,nz+1))
 data_Wt = np.zeros((nt,nz+1))
 data_Ws = np.zeros((nt,nz+1))
 data_At = np.zeros((nt,nz+1))
@@ -672,6 +720,11 @@ data_Et = np.zeros((nt,nz))
 data_Es = np.zeros((nt,nz))
 data_Dt = np.zeros((nt,nz))
 data_Ds = np.zeros((nt,nz))
+
+data_THt_groups = np.zeros((nt,ng,nz+1))
+data_Wt_groups = np.zeros((nt,ng,nz+1))
+data_At_groups = np.zeros((nt,ng,nz+1))
+data_Ft_groups = np.zeros((nt,ng,nz+1))
 
 #%%
 zi = np.zeros(nt)
@@ -715,10 +768,11 @@ for it in range(nt):
     data_TH_[it] = TH_
     
     if H_iter>0:
-        data_MFF[it] ,data_THt[it],data_Wt[it],data_At[it],data_Ft[it],data_Et[it],data_Dt[it] ,data_THs[it],data_Ws[it],data_As[it],data_Fs[it],data_Es[it],data_Ds[it] = MFst(z,dz,TH,TH_,RHO,RHO_,zi_iter,Wstar_iter,H_iter,alpha,alpha_,adot,adot_,phi,phi_,gamma)
+        data_MFF[it],data_Wstar[it] ,data_THt[it],data_Wt[it],data_At[it],data_Ft[it],data_Et[it],data_Dt[it] ,data_THs[it],data_Ws[it],data_As[it],data_Fs[it],data_Es[it],data_Ds[it] ,data_THt_groups[it],data_Wt_groups[it],data_At_groups[it],data_Ft_groups[it]= MFst(z,dz,ztg,TH,TH_,RHO,RHO_,H_iter,alpha,alpha_,adot,adot_,phi,phi_,gamma)
     elif H_iter<0:
         data_MFF[it] ,data_THt[it],data_Wt[it],data_At[it],data_Ft[it],data_Et[it],data_Dt[it] ,data_THs[it],data_Ws[it],data_As[it],data_Fs[it],data_Es[it],data_Ds[it] = MFs_katabatic(z,dz,TH,TH_,RHO,RHO_,zi_iter,Wstar_iter,H_iter,alpha,alpha_,adot,adot_,phi,phi_,gamma)
 
+data_THe = (alpha_.reshape(1,nz+1)*data_TH_ - np.nan_to_num(data_At*data_THt) - np.nan_to_num(data_As*data_THs) ) / (alpha_.reshape(1,nz+1) - np.nan_to_num(data_At) - np.nan_to_num(data_As) )
 
 #%%
 # import matplotlib.animation as animation
@@ -775,6 +829,14 @@ line_Ds, = axs[4].plot([],[],color=colors[1],label='$\\delta_s$',linestyle=':')
 
 param_lines = [line_TH,line_THt,line_THs,line_THF,line_Wt,line_Ws,line_At,line_As]
 
+if ng>0:
+    line_THt_groups,line_THFt_groups,line_Wt_groups,line_At_groups = [],[],[],[]
+    for ig,group in enumerate(thermal_groups):
+        line_THt_groups.append(axs[0].plot([],[],color=color_thermal_groups[ig])[0]) # ,label='$\\theta_{t_{'+str(g)+'}}^{LES}$'
+        line_THFt_groups.append(axs[1].plot([],[],color=color_thermal_groups[ig])[0]) # 
+        line_Wt_groups.append(axs[2].plot([],[],color=color_thermal_groups[ig])[0]) # ,label='$w_{t_{'+str(g)+'}}^{LES}$'
+        line_At_groups.append(axs[3].plot([],[],color=color_thermal_groups[ig])[0]) # ,label='$\\alpha_{t_{'+str(g)+'}}^{LES}$'
+    
 if LES:
     # all atmosphere profiles
     line_TH_LES, = axs[0].plot([],[],color=colors[2],label='$\overline{\\theta}^{LES}$',linestyle=linestyle_LES)
@@ -785,7 +847,7 @@ if LES:
     line_Wt_LES, = axs[2].plot([],[],color=colors[0],label='$w_t^{LES}$',linestyle=linestyle_LES) 
     line_At_LES, = axs[3].plot([],[],color=colors[0],label='$\\alpha_t^{LES}$',linestyle=linestyle_LES)
     line_Ft_LES, = axs[4].plot([],[],color=colors[0],label='$f_t^{LES}$',linestyle=linestyle_LES)
-    if len(thermal_groups)>0:
+    if ng>0:
         line_THt_groups_LES,line_THFt_groups_LES,line_Wt_groups_LES,line_At_groups_LES = [],[],[],[]
         for ig,group in enumerate(thermal_groups):
             line_THt_groups_LES.append(axs[0].plot([],[],color=color_thermal_groups[ig],linestyle=linestyle_LES)[0]) # ,label='$\\theta_{t_{'+str(g)+'}}^{LES}$'
@@ -822,8 +884,8 @@ def update_plot(it):
     line_THs.set_data(data_THs[it], z_)
     line_EDF.set_data(Cp*data_EDF[it], z_)
     line_THF.set_data(Cp*(data_EDF[it]+data_MFF[it]), z_)
-    line_THFt.set_data(Cp*RHO_*data_At[it].data/alpha_1*data_Wt[it]*(data_THt[it]-data_TH_[it]), z_)
-    line_THFs.set_data(Cp*RHO_*data_As[it].data/alpha_1*data_Ws[it]*(data_THs[it]-data_TH_[it]), z_)
+    line_THFt.set_data(Cp*RHO_*data_At[it].data/alpha_1*data_Wt[it]*(data_THt[it]-data_THe[it]), z_)
+    line_THFs.set_data(Cp*RHO_*data_As[it].data/alpha_1*data_Ws[it]*(data_THs[it]-data_THe[it]), z_)
     line_Wt.set_data(data_Wt[it], z_)
     line_Ws.set_data(data_Ws[it], z_)
     line_At.set_data(data_At[it], z_)
@@ -840,8 +902,8 @@ def update_plot(it):
         line_THs_LES.set_data(f['TH_s'][it].data, z)
         # line_EDF_LES.set_data(data_EDF[it], z)
         line_THF_LES.set_data(Cp*RHO*f['WTH'][it].data, z)
-        line_THFt_LES.set_data(Cp*RHO*f['ALPHA_t'][it].data/f['ALPHA'][it].data*f['W_t'][it].data*(f['TH_t'][it].data-f['TH'][it].data), z)
-        line_THFs_LES.set_data(Cp*RHO*f['ALPHA_s'][it].data/f['ALPHA'][it].data*f['W_s'][it].data*(f['TH_s'][it].data-f['TH'][it].data), z)
+        line_THFt_LES.set_data(Cp*RHO*f['ALPHA_t'][it].data/f['ALPHA'][it].data*f['W_t'][it].data*(f['TH_t'][it].data-f['TH_e'][it].data), z)
+        line_THFs_LES.set_data(Cp*RHO*f['ALPHA_s'][it].data/f['ALPHA'][it].data*f['W_s'][it].data*(f['TH_s'][it].data-f['TH_e'][it].data), z)
         line_Wt_LES.set_data(f['W_t'][it].data, z)
         line_Ws_LES.set_data(f['W_s'][it].data, z)
         line_At_LES.set_data(f['ALPHA_t'][it].data, z)
@@ -853,9 +915,14 @@ def update_plot(it):
         # line_Et.set_data(data_Et[it], z)
         # line_Dt.set_data(data_Dt[it], z)
         
-        for ig,group in enumerate(thermal_groups):
+    for ig,group in enumerate(thermal_groups):
+        line_THt_groups[ig].set_data(data_THt_groups[it,ig], z_)
+        line_THFt_groups[ig].set_data(Cp*RHO_*data_At_groups[it,ig].data/alpha_1*data_Wt_groups[it,ig]*(data_THt_groups[it,ig]-data_THe[it]), z_)
+        line_Wt_groups[ig].set_data(data_Wt_groups[it,ig], z_)
+        line_At_groups[ig].set_data(data_At_groups[it,ig], z_)
+        if LES:
             line_THt_groups_LES[ig].set_data(f['TH_t_'+str(group)][it].data, z)
-            line_THFt_groups_LES[ig].set_data(Cp*RHO*f['ALPHA_t_'+str(group)][it].data/f['ALPHA'][it].data*f['W_t_'+str(group)][it].data*(f['TH_t_'+str(group)][it].data-f['TH'][it].data), z)
+            line_THFt_groups_LES[ig].set_data(Cp*RHO*f['ALPHA_t_'+str(group)][it].data/f['ALPHA'][it].data*f['W_t_'+str(group)][it].data*(f['TH_t_'+str(group)][it].data-f['TH_e'][it].data), z)
             line_Wt_groups_LES[ig].set_data(f['W_t_'+str(group)][it].data, z)
             line_At_groups_LES[ig].set_data(f['ALPHA_t_'+str(group)][it].data, z)
 
@@ -885,139 +952,322 @@ plt.show()
 # plt.xticks(fontsize=ft)
 
 #%% Test méthode numérique du thermique
-# a = 0.85 # Coefficient de réduction de flottabilité
-# Cw0 = 0.2
-# At0 = 0.15 # EDKF At0*Cw0 = 0.065
-# D0 = 0.0005
-# E0 = 0.#D0
-# CD = 5.
-# pat = (CD/a-1)/2
-# b = 5e-4#0.5/zi # (m-1)
-# D = 20. # depth of surface layer (m)
-# Cd = 0.005 # drag coefficient # sans dimension # wikipedia for flat plate with Re>10e6
-
-# def iter_t_explicite(dz,THe,wt2,tht,ft):
-#     Bti = g * (tht-THe)/THe #; print("Bti = ",Bti, "z=",z_[jz])
-#     if Bti>0:
-#         Dt = b + D0
-#         Et = a/2*Bti/wt2
-#         wt2 += dz* ( a*Bti -2*b*wt2 )
-#         tht += dz*Et*(THe-tht)
-#     else:
-#         Et = E0
-#         Dt = b - CD*Bti/wt2
-#         wt2 += 2*dz* ( a*Bti -(b+E0)*wt2 )
-#         tht += dz*E0*(THe-tht)
-#     ft *= exp(dz*(Et-Dt))
-#     return wt2,tht,ft
-
-# def iter_t_trapeze(dz,THe,wt2,tht,ft):
-#     Bti = g * (tht-THe)/THe #; print("Bti = ",Bti, "z=",z_)
-#     if Bti>0:
-#         Dt = b + D0
-#         Bt = (dz*a*Bti-wt2+sqrt((wt2-dz*a*Bti)**2+2*dz*wt2*Bti*(3*a+b))) / dz/(3*a+b) #; print("Bt = ",Bt)
-#         sumwt2 = (dz*a*Bt+wt2)/(1+dz*b) #; print("sumwt2 = ",sumwt2)
-#         Et = a*Bt/sumwt2
-#         wt2 = sumwt2 - wt2
-#         # tht -= dz*a*THe/g*Bt**2/sumwt2 # ou tht = 2*(THe/g*Bt + THe)-tht
-#         tht = 2*(THe/g*Bt + THe)-tht
-#     else:
-#         Et = E0
-#         Bt = 2*Bti/(2+dz*E0)
-#         sumwt2 = wt2 + (2*dz*a*Bt+wt2*(1-dz*(b+E0))) / (1+dz*(b+E0))
-#         Dt = b - 2*CD*Bt/sumwt2
-#         wt2 = sumwt2 - wt2
-#         tht = 2*(THe/g*Bt + THe)-tht
-#     ft *= exp(dz*(Et-Dt))
-#     return wt2,tht,ft
-
-# def iter_t_rat(dz,THe,wt2,tht,ft):
-#     Bt = a* g * (tht-THe)/THe
-#     rat = ft/sqrt(wt2)
-#     oldwt2,oldft = wt2,ft
-#     if Bt>0:
-#         rat *= exp(-dz*D0)
-#         et = dz*ft*Bt/2/wt2
-#         wt2 = (wt2+  dz*Bt) / (1+2*dz*b)
-#         wt = sqrt(wt2)
-#         ft = rat*wt
-#         # et = (ft+oldft)/2 * (log(wt2/oldwt2)/2 + dz*b)
-#         tht = ( ft*tht + et*THe )  / (ft+et) #/ (ft[jz+1]+Ds) #
+def make_test():
+    a = 0.85 # Coefficient de réduction de flottabilité
+    Cw0 = 0.2
+    At0 = 0.15 # EDKF At0*Cw0 = 0.065
+    D0 = 0.0005
+    E0 = 0.#D0
+    CD = 5.
+    pat = (CD/a-1)/2
+    b = 5e-4#0.5/zi # (m-1)
+    D = 20. # depth of surface layer (m)
+    Cd = 0.005 # drag coefficient # sans dimension # wikipedia for flat plate with Re>10e6
+    
+    def iter_t_explicite(dz,THe,wt2,tht,ft):
+        Bti = g * (tht-THe)/THe #; print("Bti = ",Bti, "z=",z_[jz])
+        if Bti>0:
+            Dt = b + D0
+            Et = a/2*Bti/wt2
+            wt2 += dz* ( a*Bti -2*b*wt2 )
+            tht += dz*Et*(THe-tht)
+        else:
+            Et = E0
+            Dt = b - CD*Bti/wt2
+            wt2 += 2*dz* ( a*Bti -(b+E0)*wt2 )
+            tht += dz*E0*(THe-tht)
+        ft *= exp(dz*(Et-Dt))
+        return wt2,tht,ft
+    
+    def iter_t_trapeze(dz,THe,wt2,tht,ft):
+        Bti = g * (tht-THe)/THe #; print("Bti = ",Bti, "z=",z_)
+        if Bti>0:
+            Dt = b + D0
+            Bt = (dz*a*Bti-wt2+sqrt((wt2-dz*a*Bti)**2+2*dz*wt2*Bti*(3*a+b))) / dz/(3*a+b) #; print("Bt = ",Bt)
+            sumwt2 = (dz*a*Bt+wt2)/(1+dz*b) #; print("sumwt2 = ",sumwt2)
+            Et = a*Bt/sumwt2
+            wt2 = sumwt2 - wt2
+            # tht -= dz*a*THe/g*Bt**2/sumwt2 # ou tht = 2*(THe/g*Bt + THe)-tht
+            tht = 2*(THe/g*Bt + THe)-tht
+        else:
+            Et = E0
+            Bt = 2*Bti/(2+dz*E0)
+            sumwt2 = wt2 + (2*dz*a*Bt+wt2*(1-dz*(b+E0))) / (1+dz*(b+E0))
+            Dt = b - 2*CD*Bt/sumwt2
+            wt2 = sumwt2 - wt2
+            tht = 2*(THe/g*Bt + THe)-tht
+        ft *= exp(dz*(Et-Dt))
+        return wt2,tht,ft
+    
+    def iter_t_rat(dz,THe,wt2,tht,ft):
+        Bt = a* g * (tht-THe)/THe
+        rat = ft/sqrt(wt2)
+        oldwt2,oldft = wt2,ft
+        if Bt>0:
+            rat *= exp(-dz*D0)
+            et = dz*ft*Bt/2/wt2
+            wt2 = (wt2+  dz*Bt) / (1+2*dz*b)
+            wt = sqrt(wt2)
+            ft = rat*wt
+            # et = (ft+oldft)/2 * (log(wt2/oldwt2)/2 + dz*b)
+            tht = ( ft*tht + et*THe )  / (ft+et) #/ (ft[jz+1]+Ds) #
+            
+        else:
+            # at *= exp(dz*(CD/a-1.)*Bt/wt2)
+            wt2 = (wt2+2*dz*Bt)#/ (1+2*dz*b)
+            if wt2>0:
+                rat *= (wt2/oldwt2)**pat
+                wt = sqrt(wt2)
+                ft = rat*wt
+            else:
+                ft=0
+        return wt2,tht,ft
+    
+    
+    plt.close('all')
+    it = 7
+    TH = f['TH'][it].data
+    TH_ = compute_(TH)
+    
+    ncols = 5
+    ft=15
+    
+    fig, axs = plt.subplots(ncols=ncols,figsize=(20,6))
+    plt.subplots_adjust(left=0.045,right=0.995,bottom=0.1,top=0.9,wspace=0.05,hspace=0.)
+    # fig.figsize = (16, 5)
+    # colors = ['r','g','b','c'] # t,s, all
+    xlims = [[T0-2,T0+16],[-100,400],[-2,5],[-0.01,0.21],[-0.5,0.5],[-0.02,0.02]]
+    for i in range(len(axs)):
+        axs[i].set_xlim(xlims[i])
+        axs[i].set_ylim([0,zmax])
+        axs[i].grid(axis='y')
+        axs[i].axvline(x=0,color='grey',linestyle='-',linewidth = 0.5)
+        if i==0:
+            axs[i].set_ylabel('z (m)',fontsize=ft)
+        axs[i].set_xlabel(xlabels[i],fontsize=ft)
+        axs[i].set_xlim(xlims[i])
         
-#     else:
-#         # at *= exp(dz*(CD/a-1.)*Bt/wt2)
-#         wt2 = (wt2+2*dz*Bt)#/ (1+2*dz*b)
-#         if wt2>0:
-#             rat *= (wt2/oldwt2)**pat
-#             wt = sqrt(wt2)
-#             ft = rat*wt
-#         else:
-#             ft=0
-#     return wt2,tht,ft
+    
+    axs[0].plot(TH,z,'--k')
+    axs[0].plot(f['TH_t'][it].data,z,'-k')
+    axs[1].plot(Cp*f['WTH'][it].data,z,'--k')
+    axs[1].plot(Cp*RHO*f['ALPHA_t'][it].data/f['ALPHA'][it].data*f['W_t'][it].data*(f['TH_t'][it].data-f['TH'][it].data),z,'-k')
+    axs[2].plot(f['W_t'][it].data,z,'-k')
+    axs[3].plot(f['ALPHA_t'][it].data,z,'-k')
+    axs[4].plot(RHO*f['W_t'][it].data*f['ALPHA_t'][it].data,z,'-k')
+    
+    
+    # axs[0].plot(TH,z,'-k')
+    for iter_t in [iter_t_explicite,iter_t_rat]:
+        THt = np.full(nz+1,np.nan)
+        Wt = np.full(nz+1,np.nan)
+        Ft = np.zeros(nz+1)
+        At = np.zeros(nz+1)
+        FTHt = np.zeros(nz+1)
+        iz = 1
+        
+        wt = 0.2
+        at = 0.15
+        ft = RHO_[iz]*at*wt
+        wt2 = wt**2
+        tht = TH[iz-1]
+        
+        jz = iz
+        while jz < nz and wt2>0: # boucle pour le thermique jusqu'en haut
+            THt[jz] = tht
+            FTHt[jz] = ft * (tht-TH_[jz])
+            Wt[jz] = sqrt(wt2)
+            At[jz] = ft/Wt[jz]/RHO[jz]
+            Ft[jz] = ft
+            
+            
+            wt2,tht,ft = iter_t(dz[jz],TH[jz],wt2,tht,ft)
+            jz += 1
+        
+        axs[0].plot(THt,z_)
+        axs[1].plot(FTHt*Cp,z_)
+        axs[2].plot(Wt,z_)
+        axs[3].plot(At,z_)
+        axs[4].plot(Ft,z_)
 
 
-# plt.close('all')
-# it = 7
-# TH = f['TH'][it].data
-# TH_ = compute_(TH)
+#%% visualisation simplifiée pour la présentation G3T
 
-# ncols = 5
+# # import matplotlib.animation as animation
+# ncols = 3
 # ft=15
 
-# fig, axs = plt.subplots(ncols=ncols,figsize=(20,6))
-# plt.subplots_adjust(left=0.045,right=0.995,bottom=0.1,top=0.9,wspace=0.05,hspace=0.)
+# param = True
+# LES = True
+
+# fig, axs = plt.subplots(ncols=ncols,figsize=(16,6))
+# plt.subplots_adjust(left=0.045,right=0.995,bottom=0.1,top=0.9,wspace=0.1,hspace=0.)
 # # fig.figsize = (16, 5)
-# # colors = ['r','g','b','c'] # t,s, all
-# xlims = [[T0-2,T0+16],[-100,400],[-2,5],[-0.01,0.21],[-0.5,0.5],[-0.02,0.02]]
-# for i in range(len(axs)):
-#     axs[i].set_xlim(xlims[i])
+# colors = ['r','g','k','c'] # t,s, all
+# xlims = [[T0+8,T0+16],[-1,3.5],[-0.01,0.14]]
+# xlabels = ['$\\theta$ (K)', 'W (m/s)', '$\\alpha$' ,'f','$\\epsilon$ and $\\delta$ ($m^{-1}$)']
+
+# linestyle_LES = '-.'
+
+# for i in range(ncols):
 #     axs[i].set_ylim([0,zmax])
 #     axs[i].grid(axis='y')
 #     axs[i].axvline(x=0,color='grey',linestyle='-',linewidth = 0.5)
 #     if i==0:
 #         axs[i].set_ylabel('z (m)',fontsize=ft)
+#     # else:
+#         # axs[i].set_yticks([])#,fontsize=0)
+#         # axs[i].set_yticklabels([])
+    
 #     axs[i].set_xlabel(xlabels[i],fontsize=ft)
 #     axs[i].set_xlim(xlims[i])
+
+# # axs[0].axvline(x=T0,color='grey',linestyle='-',linewidth=1,label='$\\theta_{ini}$')
+# line_T0 = axs[0].plot(f['TH'][0].data,z,color='grey',linestyle='-',linewidth=1,label='$\overline{\\theta_{ini}}$')
+# # line_zi = axs[0].axhline(y=zi[0],color='k',linestyle='--',label='$z_i$')
+# # line_H = axs[1].axvline(x=H[0],color='k',linestyle='--',label='$H$')
+# # line_Wstar = axs[2].axvline(x=Wstar[0],color='k',linestyle='--',label='$w_*$')
+# # line_A, = axs[3].plot(alpha,z,color='k',linestyle='--',label='$\\alpha$')
+
+# if param:
+#     line_TH, = axs[0].plot([],[],color=colors[2],label='$\overline{\\theta}$')
+#     line_THt,= axs[0].plot([],[],color=colors[0],label='$\\theta_t$')
+#     line_THs,= axs[0].plot([],[],color=colors[1],label='$\\theta_s$')
+    
+#     # line_THF,= axs[1].plot([],[],color=colors[2],label='$\overline{w^{\prime}\\theta^{\prime}}_{EDMF}$')
+#     # line_THFt,= axs[1].plot([],[],color=colors[0],label='$\\beta_t \overline{w}^t (\overline{\\theta}^t - \overline{\\theta})$')
+#     # line_THFs,= axs[1].plot([],[],color=colors[1],label='$\\beta_s \overline{w}^s (\overline{\\theta}^s - \overline{\\theta})$')
+#     # line_EDF,= axs[1].plot([],[],color=colors[3],label='$\overline{w^{\prime}\\theta^{\prime}}_{ED}$') 
+#     line_Wt, = axs[1].plot([],[],color=colors[0],label='$w_t$') 
+#     line_Ws, = axs[1].plot([],[],color=colors[1],label='$w_s$') 
+#     line_At, = axs[2].plot([],[],color=colors[0],label='$\\alpha_t$')
+#     line_As, = axs[2].plot([],[],color=colors[1],label='$\\alpha_s$')
+    
+#     # param_lines = [line_TH,line_THt,line_THs,line_THF,line_Wt,line_Ws,line_At,line_As]
+    
+#     if ng>0:
+#         line_THt_groups,line_THFt_groups,line_Wt_groups,line_At_groups = [],[],[],[]
+#         for ig,group in enumerate(thermal_groups):
+#             line_THt_groups.append(axs[0].plot([],[],color=color_thermal_groups[ig])[0]) # ,label='$\\theta_{t_{'+str(g)+'}}^{LES}$'
+#             # line_THFt_groups.append(axs[1].plot([],[],color=color_thermal_groups[ig])[0]) # 
+#             line_Wt_groups.append(axs[1].plot([],[],color=color_thermal_groups[ig])[0]) # ,label='$w_{t_{'+str(g)+'}}^{LES}$'
+#             line_At_groups.append(axs[2].plot([],[],color=color_thermal_groups[ig])[0]) # ,label='$\\alpha_{t_{'+str(g)+'}}^{LES}$'
+    
+# if LES:
+#     # all atmosphere profiles
+#     line_TH_LES, = axs[0].plot([],[],color=colors[2],label='$\overline{\\theta}^{LES}$',linestyle=linestyle_LES)
+#     # line_THF_LES,= axs[1].plot([],[],color=colors[2],label='$\overline{w^{\prime}\\theta^{\prime}}^{LES}$' ,linestyle=linestyle_LES)
+#     # thermals profiles
+#     line_THt_LES,= axs[0].plot([],[],color=colors[0],label='$\\theta_t^{LES}$',linestyle=linestyle_LES)
+#     # line_THFt_LES,= axs[1].plot([],[],color=colors[0],label='$\\beta_t \overline{w}^t (\overline{\\theta}^t - \overline{\\theta})^{LES}$' ,linestyle=linestyle_LES)
+#     line_Wt_LES, = axs[1].plot([],[],color=colors[0],label='$w_t^{LES}$',linestyle=linestyle_LES) 
+#     line_At_LES, = axs[2].plot([],[],color=colors[0],label='$\\alpha_t^{LES}$',linestyle=linestyle_LES)
+#     # line_Ft_LES, = axs[4].plot([],[],color=colors[0],label='$f_t^{LES}$',linestyle=linestyle_LES)
+#     if ng>0:
+#         line_THt_groups_LES,line_THFt_groups_LES,line_Wt_groups_LES,line_At_groups_LES = [],[],[],[]
+#         for ig,group in enumerate(thermal_groups):
+#             line_THt_groups_LES.append(axs[0].plot([],[],color=color_thermal_groups[ig],linestyle=linestyle_LES)[0]) # ,label='$\\theta_{t_{'+str(g)+'}}^{LES}$'
+#             # line_THFt_groups_LES.append(axs[1].plot([],[],color=color_thermal_groups[ig],linestyle=linestyle_LES)[0]) # 
+#             line_Wt_groups_LES.append(axs[1].plot([],[],color=color_thermal_groups[ig],linestyle=linestyle_LES)[0]) # ,label='$w_{t_{'+str(g)+'}}^{LES}$'
+#             line_At_groups_LES.append(axs[2].plot([],[],color=color_thermal_groups[ig],linestyle=linestyle_LES)[0]) # ,label='$\\alpha_{t_{'+str(g)+'}}^{LES}$'
+    
+#     # surface layer profiles
+#     line_THs_LES,= axs[0].plot([],[],color=colors[1],label='$\\theta_s^{LES}$',linestyle=linestyle_LES)
+#     # line_THFs_LES,= axs[1].plot([],[],color=colors[1],label='$\\beta_s \overline{w}^s (\overline{\\theta}^s - \overline{\\theta})^{LES}$' ,linestyle=linestyle_LES)
+#     line_Ws_LES, = axs[1].plot([],[],color=colors[1],label='$w_s^{LES}$',linestyle=linestyle_LES) 
+#     line_As_LES, = axs[2].plot([],[],color=colors[1],label='$\\alpha_s^{LES}$',linestyle=linestyle_LES)
+#     # line_Fs_LES, = axs[4].plot([],[],color=colors[1],label='$f_s^{LES}$',linestyle=linestyle_LES)
+#     # LES_lines = [line_TH_LES,line_THt_LES,line_THs_LES,line_THF_LES,line_Wt_LES,line_Ws_LES,line_At_LES,line_As_LES]
+
+# # legends = []  
+# # for ax in axs:
+# #     # ax.legend()
+# #     legends.append(interactive_legend(ax))
+    
     
 
-# axs[0].plot(TH,z,'--k')
-# axs[0].plot(f['TH_t'][it].data,z,'-k')
-# axs[1].plot(Cp*f['WTH'][it].data,z,'--k')
-# axs[1].plot(Cp*RHO*f['ALPHA_t'][it].data/f['ALPHA'][it].data*f['W_t'][it].data*(f['TH_t'][it].data-f['TH'][it].data),z,'-k')
-# axs[2].plot(f['W_t'][it].data,z,'-k')
-# axs[3].plot(f['ALPHA_t'][it].data,z,'-k')
-# axs[4].plot(RHO*f['W_t'][it].data*f['ALPHA_t'][it].data,z,'-k')
+# title = fig.suptitle(simu+'  '+time_text[0])
+# alpha_1 = np.copy(alpha_) ; alpha_1[0] = 1.
+# def update_plot(it):
+#     title.set_text(simu+'  '+time_text[it])
+    
+    
+#     # line_zi.set_data([0,1],[zi[it],zi[it]])
+#     # line_H.set_data([H[it],H[it]],[0,1])
+#     # line_Wstar.set_data([Wstar[it],Wstar[it]],[0,1])
+#     if param:
+#         line_TH.set_data(data_TH[it], z)
+#         # line_TH.set_data(data_TH_[it], z_)
+#         # line_THt.set_data(data_THt[it], z_)
+#         line_THs.set_data(data_THs[it], z_)
+#         # line_EDF.set_data(Cp*data_EDF[it], z_)
+#         # line_THF.set_data(Cp*(data_EDF[it]+data_MFF[it]), z_)
+#         # line_THFt.set_data(Cp*RHO_*data_At[it].data/alpha_1*data_Wt[it]*(data_THt[it]-data_THe[it]), z_)
+#         # line_THFs.set_data(Cp*RHO_*data_As[it].data/alpha_1*data_Ws[it]*(data_THs[it]-data_THe[it]), z_)
+#         # line_Wt.set_data(data_Wt[it], z_)
+#         line_Ws.set_data(data_Ws[it], z_)
+#         line_At.set_data(data_At[it], z_)
+#         line_As.set_data(data_As[it], z_)
+#         # line_Ft.set_data(data_Ft[it], z_)
+#         # line_Fs.set_data(data_Fs[it], z_)
+#         # line_Et.set_data(data_Et[it], z)
+#         # line_Dt.set_data(data_Dt[it], z)
+#         # line_Es.set_data(data_Es[it], z)
+#         # line_Ds.set_data(data_Ds[it], z)
+#     if LES:
+#         line_TH_LES.set_data(f['TH'][it].data, z)
+#         # line_THt_LES.set_data(f['TH_t'][it].data, z)
+#         line_THs_LES.set_data(f['TH_s'][it].data, z)
+#         # line_EDF_LES.set_data(data_EDF[it], z)
+#         # line_THF_LES.set_data(Cp*RHO*f['WTH'][it].data, z)
+#         # line_THFt_LES.set_data(Cp*RHO*f['ALPHA_t'][it].data/f['ALPHA'][it].data*f['W_t'][it].data*(f['TH_t'][it].data-f['TH_e'][it].data), z)
+#         # line_THFs_LES.set_data(Cp*RHO*f['ALPHA_s'][it].data/f['ALPHA'][it].data*f['W_s'][it].data*(f['TH_s'][it].data-f['TH_e'][it].data), z)
+#         # line_Wt_LES.set_data(f['W_t'][it].data, z)
+#         line_Ws_LES.set_data(f['W_s'][it].data, z)
+#         # line_At_LES.set_data(f['ALPHA_t'][it].data, z)
+#         line_As_LES.set_data(f['ALPHA_s'][it].data, z)
+#         # line_TKEt_LES.set_data(f['TKE_t'][it].data, z)
+#         # line_TKEs_LES.set_data(f['TKE_s'][it].data, z)
+#         # line_Ft_LES.set_data(RHO*f['ALPHA_t'][it].data*f['W_t'][it].data, z)
+#         # line_Fs_LES.set_data(RHO*f['ALPHA_s'][it].data*f['W_s'][it].data, z)
+#         # line_Et.set_data(data_Et[it], z)
+#         # line_Dt.set_data(data_Dt[it], z)
+    
+#     sum_A_t = np.zeros(nz+1)
+#     sum_A_t_LES = np.zeros(nz)
+#     for ig,group in enumerate(thermal_groups):
+#         if param:
+#             line_THt_groups[ig].set_data(data_THt_groups[it,ig], z_)
+#             # line_THFt_groups[ig].set_data(Cp*RHO_*data_At_groups[it,ig].data/alpha_1*data_Wt_groups[it,ig]*(data_THt_groups[it,ig]-data_THe[it]), z_)
+#             line_Wt_groups[ig].set_data(data_Wt_groups[it,ig], z_)
+#             sum_A_t += data_At_groups[it,ig]
+#             line_At_groups[ig].set_data(sum_A_t, z_)
+#         if LES:
+#             TH_t_x = f['TH_t_'+str(group)][it].data
+#             W_t_x = f['W_t_'+str(group)][it].data
+#             A_t_x = f['ALPHA_t_'+str(group)][it].data
+#             iz = 0
+#             while np.isnan(TH_t_x[iz]):
+#                 iz+=1
+#             minTH = TH_t_x[iz]
+#             while TH_t_x[iz] < minTH + 0.5:
+#                 if TH_t_x[iz] < minTH:
+#                     minTH = TH_t_x[iz]
+#                 iz+=1
+#             TH_t_x[iz:] = np.nan
+#             W_t_x[iz:] = np.nan
+#             A_t_x[iz:] = 0.
+#             sum_A_t_LES += A_t_x
+            
+#             line_THt_groups_LES[ig].set_data(TH_t_x, z)
+#             # line_THFt_groups_LES[ig].set_data(Cp*RHO*f['ALPHA_t_'+str(group)][it].data/f['ALPHA'][it].data*f['W_t_'+str(group)][it].data*(f['TH_t_'+str(group)][it].data-f['TH_e'][it].data), z)
+#             line_Wt_groups_LES[ig].set_data(W_t_x, z)
+#             line_At_groups_LES[ig].set_data(sum_A_t_LES, z)
+            
+# ani = Player(fig, update_plot, maxi=nt-1,interval=20)
 
+# # ani.fig.canvas.manager.toolmanager.add_tool('Param',Param_tool,lines=param_lines)
+# # ani.fig.canvas.manager.toolbar.add_tool('Param', 'animation')
 
-# # axs[0].plot(TH,z,'-k')
-# for iter_t in [iter_t_explicite,iter_t_rat]:
-#     THt = np.full(nz+1,np.nan)
-#     Wt = np.full(nz+1,np.nan)
-#     Ft = np.zeros(nz+1)
-#     At = np.zeros(nz+1)
-#     FTHt = np.zeros(nz+1)
-#     iz = 1
-    
-#     wt = 0.2
-#     at = 0.15
-#     ft = RHO_[iz]*at*wt
-#     wt2 = wt**2
-#     tht = TH[iz-1]
-    
-#     jz = iz
-#     while jz < nz and wt2>0: # boucle pour le thermique jusqu'en haut
-#         THt[jz] = tht
-#         FTHt[jz] = ft * (tht-TH_[jz])
-#         Wt[jz] = sqrt(wt2)
-#         At[jz] = ft/Wt[jz]/RHO[jz]
-#         Ft[jz] = ft
-        
-        
-#         wt2,tht,ft = iter_t(dz[jz],TH[jz],wt2,tht,ft)
-#         jz += 1
-    
-#     axs[0].plot(THt,z_)
-#     axs[1].plot(FTHt*Cp,z_)
-#     axs[2].plot(Wt,z_)
-#     axs[3].plot(At,z_)
-#     axs[4].plot(Ft,z_)
+# # ani = animation.FuncAnimation(fig,update_plot, frames=len(les_T_t),interval=30, blit=True, repeat=True)
+# plt.show()
